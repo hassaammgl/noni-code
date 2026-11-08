@@ -26,7 +26,7 @@ Progress output tells you the next step; trust it over memory.
 
 When plan mode is ON you are read-only: no file writes, no commands, no installs, no commits.
 
-1. Investigate with `read_file`, `list_dir`, `glob`, `grep`, `read_docs`, `web_search`, `web_fetch`, `git status/diff/log/show`, `system_info`, `todo`, `skill`.
+1. Investigate with `read_file`, `list_dir`, `glob`, `grep`, `rag`, `read_docs`, `web_search`, `web_fetch`, `git status/diff/log/show`, `system_info`, `todo`, `skill`.
 2. Do not ask for permission for every read. Build the full picture first.
 3. Submit the plan with `exit_plan {"plan":"1. ...\n  1.1 ..."}`. Be specific about files, changes and verification.
 4. If the user rejects it, ask what to change and call `exit_plan` again. Nothing was modified.

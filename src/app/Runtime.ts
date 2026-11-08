@@ -6,6 +6,7 @@ import { DocsGuard, DocsRegistry } from "../docs/DocsGuard";
 import { HistoryStore, type HistoryMessage } from "../history/HistoryStore";
 import { PlanGuard } from "../plan/PlanGuard";
 import { PlanMode } from "../plan/PlanMode";
+import { RagStore } from "../rag/RagStore";
 import { SkillStore } from "../skills/SkillStore";
 import { NodeModulesSource, SystemSource } from "../docs/LocalSources";
 import { RegistrySource, WebDocsSource } from "../docs/RemoteSources";
@@ -30,6 +31,7 @@ import {
 } from "../tools/FileTool";
 import { GitTool } from "../tools/GitTool";
 import { GlobTool, GrepTool } from "../tools/SearchTools";
+import { RagTool } from "../tools/RagTool";
 import { SystemInfoTool } from "../tools/SystemTool";
 import { SkillTool } from "../tools/SkillTool";
 import { ExitPlanTool } from "../tools/PlanTool";
@@ -54,15 +56,17 @@ export interface Runtime {
     agent: Agent;
     todos: TodoStore;
     docs: DocsRegistry;
-    /** `.ai` skill packs (index prompt me, body on demand). */
+    /** Local RAG index/search (SQLite + Ollama embeddings). */
+    rag: RagStore;
+    /** `.ai` skill packs (index in prompt, body on demand). */
     skills: SkillStore;
-    /** Plan mode: read-only investigation, exit_plan se approval. */
+    /** Plan mode: read-only investigation, approval via exit_plan. */
     planMode: PlanMode;
     search: SearchEngine;
     mcp: McpManager;
     config: NoniConfig;
     configError?: string;
-    /** Runtime banate waqt di gayi UI (TUI ya web). */
+    /** UI provided when the runtime was created (TUI or web). */
     ui: RuntimeUI;
     /** SQLite chat history (sessions + messages). */
     history: HistoryStore;
@@ -70,7 +74,7 @@ export interface Runtime {
     sessionId: number;
     newSession(): number;
     loadSession(id: number): HistoryMessage[];
-    /** Ek waqt me ek hi agent run (TUI ya web client). */
+    /** One agent run at a time (TUI or web client). */
     runLock: RunLock;
     shutdown(): Promise<void>;
 }
@@ -124,6 +128,7 @@ export async function createRuntime({ cwd, model, ui }: RuntimeOptions): Promise
     ]);
     const docs = new DocsRegistry();
     const todos = new TodoStore();
+    const rag = new RagStore(cwd, ollama, config.rag);
 
     // `.ai` skills: only the index goes into the system prompt; full text loads via the `skill` tool
     const skills = new SkillStore(cwd);
@@ -155,6 +160,7 @@ export async function createRuntime({ cwd, model, ui }: RuntimeOptions): Promise
         new BashTool(cwd, jobs),
         new GlobTool(cwd),
         new GrepTool(cwd),
+        new RagTool(rag),
         new SystemInfoTool(),
         new TodoTool(todos),
         new SkillTool(skills),
@@ -187,6 +193,7 @@ export async function createRuntime({ cwd, model, ui }: RuntimeOptions): Promise
         agent,
         todos,
         docs,
+        rag,
         skills,
         planMode,
         search,
@@ -212,6 +219,7 @@ export async function createRuntime({ cwd, model, ui }: RuntimeOptions): Promise
         },
         runLock,
         async shutdown() {
+            rag.close();
             history.close();
             await jobs.closeAll();
             await mcp.close();

@@ -26,12 +26,13 @@ Universal rules:
 | `make_dir` | `path` | Creates missing parents. |
 | `delete_file` | `path` | Dangerous → confirm. |
 
-## Search
+## Search & retrieval
 
 | Tool | Args | Notes |
 | --- | --- | --- |
 | `grep` | `pattern`, `path?`, `glob?`, `ignore_case?`, `literal?` | Returns `path:line: text`. Skips `node_modules`, `.git`, binaries, huge files. |
 | `glob` | `pattern`, `path?` | `*.ts` matches in all folders; `src/**/*.ts` for paths. Max 200 results. |
+| `rag` | `action`, `query?`, `path?`, `top_k?` | Local semantic retrieval (Ollama embeddings + SQLite). `search` for relevant chunks, `index` to build/refresh, `status`, `clear`. Read cited files before editing. |
 
 ## Shell and git
 

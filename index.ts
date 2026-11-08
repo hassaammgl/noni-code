@@ -192,6 +192,39 @@ while (true) {
       ui.log(
         `client: ${clientStatus()}\nusage: /client on [port] | /client off`,
       );
+  } else if (input === "/rag" || input.startsWith("/rag ")) {
+    const parts = input.split(/\s+/).slice(1);
+    const action = parts[0] ?? "status";
+    try {
+      if (action === "status") {
+        const s = runtime.rag.status();
+        ui.log(`rag db: ${s.dbPath}\nembed model: ${s.embedModel}\nfiles: ${s.files}\nchunks: ${s.chunks}`);
+      } else if (action === "index") {
+        const target = parts[1] ?? ".";
+        ui.log(`indexing ${target} with ${runtime.rag.config.embedModel}...`);
+        const r = await runtime.rag.indexPath(target);
+        ui.log(`indexed: ${r.indexed}, skipped: ${r.skipped}, chunks: ${r.chunks}`);
+        if (r.errors.length) ui.warn(r.errors.join("\n"));
+      } else if (action === "search") {
+        const q = parts.slice(1).join(" ").trim();
+        if (!q) ui.warn("usage: /rag search <query>");
+        else {
+          const hits = await runtime.rag.search(q, 5);
+          ui.log(
+            hits.length
+              ? hits.map((h, i) => `${i + 1}. ${h.path}:${h.startLine}-${h.endLine} (${h.score?.toFixed(3)})`).join("\n")
+              : "no RAG results",
+          );
+        }
+      } else if (action === "clear") {
+        runtime.rag.clear();
+        ui.log("RAG index cleared");
+      } else {
+        ui.warn("usage: /rag status | /rag index [path] | /rag search <query> | /rag clear");
+      }
+    } catch (e: any) {
+      ui.error(e.message);
+    }
   } else if (input === "/history" || input.startsWith("/history ")) {
     const arg = input.split(/\s+/)[1] ?? "";
     if (!arg) {
@@ -267,6 +300,7 @@ while (true) {
         "/model <name>    model switch",
         "/clear           clear chat history (new session)",
         "/history [id]    list or load saved sessions",
+        "/rag             RAG status/index/search/clear",
         "/skills          list, view, or reload .ai skills",
         "/plan [on|off]   read-only plan mode (approval via exit_plan)",
         "/think           thinking on/off",

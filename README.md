@@ -45,7 +45,7 @@ First launch shows a model picker. `Enter` picks the smallest installed chat mod
 - **Update check** — checks npm for a new version at startup and every 6 hours in long sessions; `/update` runs a manual check.
 - **Web client** — optional React VRM avatar + voice + chat UI (`client/`), driven by the same agent/tools through a local `noni serve` bridge.
 - **History** — every chat is saved to SQLite; reopen with TUI `/history` or the web History button.
-- **Skills (`.ai`)** — tool/flow instructions as markdown packs; the prompt includes only an index, with full text loaded on demand.
+- **Local RAG** — index the workspace into SQLite with Ollama embeddings and retrieve relevant code chunks via the `rag` tool or `/rag`.
 - **Plan mode** — `/plan` enables read-only investigation; the agent proposes a plan and edits run only after approval.
 - **Small-model friendly TUI** — compact output, previews before risky edits, spinner with elapsed time.
 
@@ -63,6 +63,7 @@ First launch shows a model picker. `Enter` picks the smallest installed chat mod
 | `/img clear` | remove the pending image |
 | `/model <name>` | switch model |
 | `/history [id]` | list or load saved sessions |
+| `/rag` | local RAG: `status`, `index [path]`, `search <query>`, `clear` |
 | `/skills` | list `.ai` skills |
 | `/skills <name>` | view a skill's content |
 | `/skills reload` | reload skills from disk |
@@ -89,6 +90,7 @@ First launch shows a model picker. `Enter` picks the smallest installed chat mod
 | `web_search`, `web_fetch` | search and read pages |
 | `read_docs` | local package → pydoc/go doc/man/headers → npm/PyPI → web |
 | `todo` | nested plan: `plan`, `add`, `next`, `done`, `update`, `remove`, `clear` |
+| `rag` | local semantic retrieval over the workspace (index/search/status/clear) using Ollama embeddings |
 | `system_info` | OS, CPU, RAM, disk, battery, uptime |
 | MCP tools | anything enabled in `~/.config/noni-chan/config.json` |
 
@@ -317,9 +319,43 @@ npm cache clean --force
 
 **Replies cut short** — the model hit its context/output limit. Use `/clear`, raise `OLLAMA_NUM_CTX`, or raise `OLLAMA_NUM_PREDICT`.
 
-## Limitations
+## Local RAG
+
+Noni includes a local RAG path for semantic codebase retrieval:
+
+- Index workspace files into SQLite (`.noni/rag.db` by default) with Ollama embeddings.
+- Retrieve relevant chunks with `rag {"action":"search","query":"..."}` (the agent can call this automatically).
+- Use `/rag status`, `/rag index [path]`, `/rag search <query>`, `/rag clear` in the TUI.
+
+It requires a local embedding model pulled in Ollama:
+
+```bash
+ollama pull nomic-embed-text
+/rag index
+/rag search where runtime wires tools
+```
+
+Config (`~/.config/noni-chan/config.json`):
+
+```json
+{
+  "rag": {
+    "enabled": true,
+    "embedModel": "nomic-embed-text",
+    "chunkSize": 1600,
+    "chunkOverlap": 200,
+    "topK": 6,
+    "dbPath": ".noni/rag.db"
+  }
+}
+```
+
+`NONI_RAG_EMBED_MODEL` can override the embedding model. The RAG index is project-local by default; `.noni/` is ignored by git.
+
+
 
 - Ollama is the only provider right now (no Anthropic/Gemini/OpenAI adapters yet).
+- Local RAG uses Ollama embeddings; you must pull an embedding model (default `nomic-embed-text`). Without it, `/rag index` and `rag search/index` will report embedding errors. Retrieval is chunk-based semantic search, not an LSP or full AST graph.
 - Images need a vision model (checked via Ollama `capabilities`). Image data is base64 in memory, never in logs; older images stay in the chat history, so long image chats eat context — `/clear` resets.
 - The docs guard sees import lines, not every dynamic API use.
 - Very small models can still produce malformed tool calls. 2B+ models are more reliable.

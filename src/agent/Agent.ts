@@ -124,6 +124,11 @@ export class Agent {
         this.messageSink = sink;
     }
 
+    /** Extra live context for the system prompt (e.g. current todo plan). */
+    addContext(provider: () => string) {
+        this.contexts.push(provider);
+    }
+
     /** Only the `.ai` skills index goes into the system prompt; full text loads via the `skill` tool. */
     useSkills(store: SkillStore) {
         this.skills = store;
@@ -164,11 +169,6 @@ export class Agent {
                 ...(m.thinking ? { thinking: m.thinking } : {}),
             }));
         this.messages = [{ role: "system", content: this.systemPrompt() }, ...past];
-    }
-
-    /** Har run ke system prompt me extra live context (jaise current todo plan). */
-    addContext(provider: () => string) {
-        this.contexts.push(provider);
     }
 
     listTools() {
@@ -243,9 +243,9 @@ export class Agent {
 - Paths: relative to the working directory (e.g. src/index.ts). Don't wander outside it.
 - For battery, CPU, memory, disk and uptime, use the system_info tool. Never guess hardware numbers.
 - If the user asks about the system, answer from this block. Do not guess or contradict it.
-${planMode ? `\n## Plan mode (ACTIVE — read-only)\nYou may not edit files, create or delete anything, run commands, install, or commit. Investigate with read-only tools (read_file, list_dir, glob, grep, read_docs, web_search, web_fetch, git status/diff/log/show, system_info, todo, skill), then submit a short nested plan with exit_plan {"plan":"1. ...\\n  1.1 ..."}. The user must approve it before any change happens. If the user asks you to edit now, explain that plan mode is on and present the plan first.\n` : ""}${skills ? `\n## Skills (index only — load full text with the skill tool)\n${skills}\n` : ""}${extra ? `\n## Current plan (live)\n${extra}\n` : ""}
+${planMode ? `\n## Plan mode (ACTIVE — read-only)\nYou may not edit files, create or delete anything, run commands, install, or commit. Investigate with read-only tools (read_file, list_dir, glob, grep, rag, read_docs, web_search, web_fetch, git status/diff/log/show, system_info, todo, skill), then submit a short nested plan with exit_plan {"plan":"1. ...\\n  1.1 ..."}. The user must approve it before any change happens. If the user asks you to edit now, explain that plan mode is on and present the plan first.\n` : ""}${skills ? `\n## Skills (index only — load full text with the skill tool)\n${skills}\n` : ""}${extra ? `\n## Current plan (live)\n${extra}\n` : ""}
 ## Reminder (always true)
-- NONI is female: every Hindi/Urdu verb about yourself is feminine — "kar rahi hoon", "bataungi", "dekhi thi", "chala rahi hoon".
+- NONI is female and uses she/her pronouns. Keep self-references gender-consistent in English.
 - One short dry joke is fine. Two is a stand-up set, and this is a terminal.`;
     }
 
@@ -277,11 +277,11 @@ ${planMode ? `\n## Plan mode (ACTIVE — read-only)\nYou may not edit files, cre
         await this.loop();
     }
 
-    /** LLM -> tools -> LLM ... jab tak tool call aati rahe */
+    /** LLM -> tools -> LLM ... while tool calls continue */
     private async loop() {
         // If the model times out, use half context for remaining calls in this run
         let ctxOverride: number | undefined;
-        // Lagataar network/5xx failures; successful stream pe reset
+        // Consecutive network/5xx failures; reset on a successful stream
         let transientRetries = 0;
 
         while (true) {

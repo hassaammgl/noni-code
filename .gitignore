@@ -30,8 +30,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # IntelliJ based IDEs
 .idea
 
-# Finder (MacOS) folder config
-.DS_Store
+# project-local runtime data
+.noni/
 
-
-todo-cli-app/
