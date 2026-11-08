@@ -1,6 +1,6 @@
 {
   "name": "noni-chan",
-  "version": "3.0.3",
+  "version": "3.1.0",
   "description": "Agentic Coding CLI (Noni-chan CLI) — web search, docs guard, nested todos and background jobs.",
   "type": "module",
   "module": "index.ts",
@@ -10,16 +10,19 @@
   "files": [
     "bin",
     "index.ts",
+    "serve.ts",
     "src",
+    ".ai",
     "README.md",
-    "TOOLS.md"
+    "TOOLS.md",
+    "TODO.md"
   ],
   "scripts": {
     "dev": "bun run --watch index.ts",
     "start": "bun index.ts",
-    "test": "bun test",
+    "serve": "bun serve.ts",
     "typecheck": "bunx tsc --noEmit",
-    "prepublishOnly": "bun run typecheck && bun test"
+    "prepublishOnly": "bun run typecheck"
   },
   "keywords": [
     "cli",
@@ -31,19 +34,19 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hassaammgl/claude-clone.git"
+    "url": "git+https://github.com/hassaammgl/noni-code.git"
   },
   "bugs": {
-    "url": "https://github.com/hassaammgl/claude-clone/issues"
+    "url": "https://github.com/hassaammgl/noni-code/issues"
   },
-  "homepage": "https://github.com/hassaammgl/claude-clone#readme",
+  "homepage": "https://github.com/hassaammgl/noni-code#readme",
   "engines": {
     "node": ">=18",
     "bun": ">=1.1.0"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "typescript": "^5"
+    "typescript": "^5.9.3"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "^2.4.0",

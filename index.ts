@@ -1,161 +1,158 @@
-import { join } from "node:path";
-import { Ollama } from "ollama";
-import { Agent } from "./src/agent/Agent";
-import { McpManager } from "./src/mcp/McpManager";
-import { BashTool } from "./src/tools/BashTool";
-import { GlobTool, GrepTool } from "./src/tools/SearchTools";
-import { SystemInfoTool } from "./src/tools/SystemTool";
-import {
-  DeleteFileTool,
-  EditFileTool,
-  ListDirTool,
-  ReadFileTool,
-  WriteFileTool,
-} from "./src/tools/FileTool";
+import { homedir } from "node:os";
+import { extname, resolve } from "node:path";
+import { readFile, stat } from "node:fs/promises";
 import { Tui } from "./src/ui/Tui";
-import { SessionLogger } from "./src/log/SessionLogger";
-import { JobManager } from "./src/jobs/JobManager";
-import { WebFetchTool, WebSearchTool } from "./src/tools/WebTools";
-import { SearchEngine } from "./src/search/SearchEngine";
-import { SearxngProvider } from "./src/search/SearxngProvider";
-import { DuckDuckGoProvider } from "./src/search/DuckDuckGoProvider";
-import { DocsGuard, DocsRegistry } from "./src/docs/DocsGuard";
-import { NodeModulesSource, SystemSource } from "./src/docs/LocalSources";
-import { RegistrySource, WebDocsSource } from "./src/docs/RemoteSources";
-import { ReadDocsTool } from "./src/tools/DocsTool";
-import { TodoStore } from "./src/todos/TodoStore";
-import { TodoTool } from "./src/tools/TodoTool";
+import { checkForUpdate, type UpdateInfo } from "./src/update/UpdateCheck";
+import { createRuntime } from "./src/app/Runtime";
+import { pickModel } from "./src/app/ModelPicker";
+import { startServer, type RunningServer } from "./src/server/Server";
+import { WebAgentUI } from "./src/server/WebAgentUI";
 
 const cwd = process.cwd();
-const logger = new SessionLogger(cwd);
-const jobs = new JobManager((event, job) =>
-  logger.log("job", {
-    event,
-    id: job.id,
-    status: job.status,
-    command: job.command,
-    exit_code: job.exitCode,
-    duration_ms: (job.endedAt ?? Date.now()) - job.startedAt,
-  }),
-);
-const ollama = new Ollama({
-  host: process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434",
-});
+const updatePromise = checkForUpdate();
 const ui = new Tui();
-const mcp = new McpManager();
 
-const FALLBACK_MODEL = "qwen3.5:0.8b";
-
-/** "752.39M" / "1.9B" -> billions, taake sabse chhota model pehle aaye. */
-function paramsB(text: string): number {
-  const m = /([\d.]+)\s*([KMBT])/i.exec(text);
-  if (!m) return Number.POSITIVE_INFINITY;
-  const n = Number(m[1]);
-  const unit = m[2]!.toUpperCase();
-  return n * (unit === "K" ? 1e-6 : unit === "M" ? 1e-3 : unit === "B" ? 1 : 1e3);
+// Agent + tools from one place: both the TUI and `noni serve` use this runtime
+const model = await pickModel(ui);
+const runtime = await createRuntime({ cwd, model, ui });
+const { agent, jobs, todos } = runtime;
+if (runtime.configError) {
+  ui.warn(`could not read config.json (${runtime.configError}); using defaults`);
 }
 
-/** Startup pe model chuno. OLLAMA_MODEL set ho ya stdin TTY na ho to bina puche wahi/fallback. */
-async function pickModel(): Promise<string> {
-  const fromEnv = process.env.OLLAMA_MODEL?.trim();
-  if (fromEnv) return fromEnv;
-  if (!process.stdin.isTTY) return FALLBACK_MODEL;
+/** `/client on|off` — same process, same agent and tools. */
+const webUi = new WebAgentUI();
+const CLIENT_PORT = Number(process.env.NONI_PORT) || 4317;
+let client: RunningServer | null = null;
+let clientStarting = false;
 
+async function clientOn(port = CLIENT_PORT) {
+  if (client) {
+    ui.log(`client already ON → ${client.url}`);
+    return;
+  }
+  if (clientStarting) {
+    ui.log("client is starting…");
+    return;
+  }
+  clientStarting = true;
   try {
-    const { models } = await ollama.list();
-    const choices = models
-      .filter((m) => {
-        const caps = (m as { capabilities?: string[] }).capabilities;
-        return !caps?.length || caps.includes("completion");
-      })
-      .map((m) => {
-        const params = m.details?.parameter_size ?? "?";
-        return {
-          name: m.name,
-          params,
-          size: m.size ? `${(m.size / 1024 ** 3).toFixed(1)} GB` : "?",
-          order: paramsB(params === "?" ? m.name : params),
-          bytes: m.size,
-        };
-      })
-      .sort((a, b) => a.order - b.order || a.bytes - b.bytes);
-
-    if (!choices.length) {
-      ui.warn(`koi chat model nahi mila, ${FALLBACK_MODEL} use kar rahi hoon`);
-      return FALLBACK_MODEL;
-    }
-    return await ui.chooseModel(choices, 0); // sabse chhota = default
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    ui.warn(`Ollama se model list nahi aayi (${msg}); ${FALLBACK_MODEL} use kar rahi hoon`);
-    return FALLBACK_MODEL;
+    client = await startServer({ runtime, ui: webUi, port });
+    ui.log(`client ON → ${client.url}`);
+    if (process.env.NONI_SERVE_TOKEN) ui.log("token required (x-noni-token)");
+    ui.log("open in browser; use /client off to stop");
+  } catch (e: any) {
+    ui.error(`client failed to start: ${e.message}`);
+  } finally {
+    clientStarting = false;
   }
 }
 
-const agent = new Agent(ollama, await pickModel(), ui, cwd);
-agent.addLogger(logger);
+async function clientOff() {
+  if (!client) {
+    ui.log("client already OFF");
+    return;
+  }
+  const running = client;
+  client = null;
+  await running.stop();
+  webUi.cancelPending();
+  ui.log("client OFF");
+}
 
-const search = new SearchEngine([
-  new SearxngProvider(process.env.SEARXNG_URL ?? "http://localhost:8080"), // pehle apna
-  new DuckDuckGoProvider(), // fallback
-]);
-const docs = new DocsRegistry();
-const todos = new TodoStore();
-
-// third-party import wale edit pe docs padhna zaroori
-agent.addGuard(new DocsGuard(docs, cwd));
-// Plan har run ke system prompt me, taake model apne tasks na bhoole
-agent.addContext(() => (todos.size ? todos.render(6_000) : ""));
-
-const mcpTools = await mcp.load(join(cwd, "mcp.json"));
-agent.addTools(
-  new ReadFileTool(cwd),
-  new ListDirTool(cwd),
-  new WriteFileTool(cwd),
-  new EditFileTool(cwd),
-  new DeleteFileTool(cwd),
-  new BashTool(cwd, jobs),
-  new GlobTool(cwd),
-  new GrepTool(cwd),
-  new SystemInfoTool(),
-  new TodoTool(todos),
-  new WebSearchTool(search),
-  new WebFetchTool(),
-  new ReadDocsTool(docs, [
-    new NodeModulesSource(cwd), // JS/TS: installed package
-    new SystemSource(cwd), // Python (pydoc), Go (go doc), C/C++ (man + /usr/include)
-    new RegistrySource(), // npm / PyPI
-    new WebDocsSource(search), // last resort
-  ]),
-  ...mcpTools,
-);
+function clientStatus(): string {
+  return client ? `ON → ${client.url}` : "OFF";
+}
 
 let busy = false;
 let closing = false;
 let shuttingDown = false;
 
+/** Image attached via /img — sent with the next message, then cleared */
+let pendingImage: { path: string; base64: string; bytes: number } | null = null;
+
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+const fmtSize = (bytes: number) => (bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(0)} KB`);
+
+const IMAGE_MIME: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".bmp": "image/bmp",
+  ".avif": "image/avif",
+};
+
+/** Image file → base64. Logs only path/size, never the data */
+async function loadImage(raw: string) {
+  const clean = raw.trim().replace(/^~(?=$|\/)/, homedir());
+  const abs = resolve(cwd, clean);
+  let info;
+  try {
+    info = await stat(abs);
+  } catch {
+    throw new Error(`image not found: ${clean}`);
+  }
+  if (!info.isFile()) throw new Error(`not a file: ${clean}`);
+  const ext = extname(abs).toLowerCase();
+  if (!IMAGE_MIME[ext]) throw new Error(`not an image (${ext || "no extension"}): ${clean}`);
+  if (info.size > MAX_IMAGE_BYTES) throw new Error(`image too big: ${(info.size / 1e6).toFixed(1)} MB (max 10 MB)`);
+  if (!(await agent.supportsVision())) {
+    throw new Error(`model ${agent.model} does not support vision; choose a vision-capable model with /model`);
+  }
+  return { path: clean, base64: (await readFile(abs)).toString("base64"), bytes: info.size };
+}
+
 async function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
-  logger.sessionEnd();
-  await jobs.closeAll();
-  await logger.close();
-  await mcp.close();
+  if (client) {
+    const running = client;
+    client = null;
+    await running.stop();
+  }
+  await runtime.shutdown();
 }
 
 ui.onExit(async () => {
   closing = true;
-  // Stream ke beech Ctrl-D se process na mare, pehle current run poora hone do
+  // On Ctrl-D during a stream, let the current run finish before exiting
   if (busy) return;
   await shutdown();
   process.exit(0);
 });
 
-logger.sessionStart(agent.model, agent.listTools().length);
-logger.event("mcp", { tools: mcpTools.length, config: join(cwd, "mcp.json") });
 ui.banner(agent.model, agent.listTools().length, todos.size);
+if (runtime.planMode.on) {
+  ui.log("plan mode ON (read-only) — the agent will propose a plan; tools unlock after approval. Use /plan off to disable");
+}
+
+/** Avoid showing the same latest-version warning twice */
+let notifiedVersion = "";
+function showUpdate(info: UpdateInfo, force = false) {
+  if (!force && notifiedVersion === info.latest) return;
+  notifiedVersion = info.latest;
+  ui.warn(`update available: ${info.current} → ${info.latest}`);
+  ui.log(`install: bun add -g ${info.name}@latest`);
+}
+
+const UPDATE_INTERVAL_MS =
+  Number(process.env.NONI_UPDATE_INTERVAL_MS) || 6 * 60 * 60 * 1000;
+let lastUpdateCheck = Date.now();
+
+const update = await updatePromise;
+if (update.status === "update") showUpdate(update);
 
 while (true) {
+  // Detect new versions in long sessions: check every 6 hours (or env override)
+  if (Date.now() - lastUpdateCheck >= UPDATE_INTERVAL_MS) {
+    lastUpdateCheck = Date.now();
+    const refreshed = await checkForUpdate();
+    if (refreshed.status === "update") showUpdate(refreshed);
+  }
+
   let input: string;
   try {
     input = await ui.prompt();
@@ -163,27 +160,152 @@ while (true) {
     break;
   }
   if (!input) continue;
-  logger.input(input);
-  if (input.startsWith("/")) logger.command(input);
 
   if (input === "/exit") ui.close();
-  else if (input === "/clear") agent.reset();
+  else if (input === "/clear") {
+    if (runtime.runLock.busy) ui.warn("agent is busy — run /clear after the chat finishes");
+    else {
+      runtime.newSession();
+      pendingImage = null;
+      ui.log("chat cleared — new session started");
+    }
+  }
   else if (input === "/think") {
     agent.think = !agent.think;
     ui.log(`thinking: ${agent.think ? "ON" : "OFF"}`);
+  } else if (input === "/plan" || input === "/plan on" || input === "/plan off") {
+    const want = input === "/plan" ? !runtime.planMode.on : input === "/plan on";
+    runtime.planMode.set(want);
+    ui.log(
+      want
+        ? "plan mode ON — read-only investigation; the agent will request approval via exit_plan, then tools unlock"
+        : "plan mode OFF — write/run tools enabled",
+    );
+  } else if (input === "/client" || input.startsWith("/client ")) {
+    const parts = input.split(/\s+/);
+    const arg = parts[1] ?? "";
+    if (arg === "on") {
+      const port = Number(parts[2]);
+      await clientOn(Number.isFinite(port) && port > 0 ? port : CLIENT_PORT);
+    } else if (arg === "off") await clientOff();
+    else
+      ui.log(
+        `client: ${clientStatus()}\nusage: /client on [port] | /client off`,
+      );
+  } else if (input === "/rag" || input.startsWith("/rag ")) {
+    const parts = input.split(/\s+/).slice(1);
+    const action = parts[0] ?? "status";
+    try {
+      if (action === "status") {
+        const s = runtime.rag.status();
+        ui.log(`rag db: ${s.dbPath}\nembed model: ${s.embedModel}\nfiles: ${s.files}\nchunks: ${s.chunks}`);
+      } else if (action === "index") {
+        const target = parts[1] ?? ".";
+        ui.log(`indexing ${target} with ${runtime.rag.config.embedModel}...`);
+        const r = await runtime.rag.indexPath(target);
+        ui.log(`indexed: ${r.indexed}, skipped: ${r.skipped}, chunks: ${r.chunks}`);
+        if (r.errors.length) ui.warn(r.errors.join("\n"));
+      } else if (action === "search") {
+        const q = parts.slice(1).join(" ").trim();
+        if (!q) ui.warn("usage: /rag search <query>");
+        else {
+          const hits = await runtime.rag.search(q, 5);
+          ui.log(
+            hits.length
+              ? hits.map((h, i) => `${i + 1}. ${h.path}:${h.startLine}-${h.endLine} (${h.score?.toFixed(3)})`).join("\n")
+              : "no RAG results",
+          );
+        }
+      } else if (action === "clear") {
+        runtime.rag.clear();
+        ui.log("RAG index cleared");
+      } else {
+        ui.warn("usage: /rag status | /rag index [path] | /rag search <query> | /rag clear");
+      }
+    } catch (e: any) {
+      ui.error(e.message);
+    }
+  } else if (input === "/history" || input.startsWith("/history ")) {
+    const arg = input.split(/\s+/)[1] ?? "";
+    if (!arg) {
+      const sessions = runtime.history.list(15);
+      ui.log(
+        sessions.length
+          ? sessions
+              .map(
+                (s) =>
+                  `${String(s.id).padStart(3)}  ${s.updatedAt.slice(0, 16).replace("T", " ")}  ${s.title}`,
+              )
+              .join("\n")
+          : "no history",
+      );
+      ui.log(`current: #${runtime.sessionId}`);
+    } else if (runtime.runLock.busy) {
+      ui.warn("agent is busy — load history later");
+    } else {
+      const id = Number(arg);
+      if (!Number.isInteger(id)) {
+        ui.warn("usage: /history [id]");
+      } else {
+        try {
+          const messages = runtime.loadSession(id);
+          ui.log(`loaded #${id} (${messages.length} messages)`);
+          const tail = messages
+            .slice(-6)
+            .map((m) => `${m.role}: ${m.content.replace(/\s+/g, " ").slice(0, 120)}`);
+          if (tail.length) ui.log(tail.join("\n"));
+        } catch (e: any) {
+          ui.error(e.message);
+        }
+      }
+    }
+  } else if (input === "/skills" || input.startsWith("/skills ")) {
+    const arg = input.slice(7).trim();
+    if (!arg) {
+      const skills = runtime.skills.list();
+      ui.log(
+        skills.length
+          ? `${skills.length} skills (.ai)\n${runtime.skills.renderList()}\n\nUse /skills <name> to view a skill, /skills reload to reload from disk`
+          : `no skills found\n${runtime.skills.locations().join("\n")}`,
+      );
+    } else if (arg === "reload") {
+      const skills = await runtime.skills.load();
+      ui.log(`${skills.length} skills reloaded`);
+    } else {
+      const skill = runtime.skills.get(arg);
+      if (!skill) ui.warn(`skill "${arg}" not found — use /skills to list available skills`);
+      else {
+        const body = skill.body.length > 1600 ? `${skill.body.slice(0, 1600)}\n…` : skill.body;
+        ui.log(`# ${skill.name} (${skill.source}: ${skill.path})\n\n${body}`);
+      }
+    }
+  } else if (input === "/update") {
+    ui.log("checking npm for updates...");
+    const result = await checkForUpdate();
+    if (result.status === "update") showUpdate(result, true);
+    else if (result.status === "current") ui.log(`up to date: ${result.name} ${result.current}`);
+    else if (result.reason === "disabled") ui.warn("update check disabled (NONI_NO_UPDATE_CHECK)");
+    else ui.warn("update check failed (offline or npm registry down?)");
   } else if (input === "/help")
     ui.log(
       [
-        "/help            ye list",
+        "/help            show this list",
         "/tools           tools + dangerous markers",
         "/todos           current plan",
-        "/todos clear     plan hatao",
+        "/todos clear     clear the plan",
         "/jobs            background jobs",
-        "/jobs kill <id>  job band karo",
-        "/logs [n]        last n log lines + file path",
+        "/jobs kill <id>  stop a job",
+        "/img <path>      attach an image to the next message",
+        "/img clear       remove the pending image",
         "/model <name>    model switch",
-        "/clear           chat history clear (plan rehta hai)",
+        "/clear           clear chat history (new session)",
+        "/history [id]    list or load saved sessions",
+        "/rag             RAG status/index/search/clear",
+        "/skills          list, view, or reload .ai skills",
+        "/plan [on|off]   read-only plan mode (approval via exit_plan)",
         "/think           thinking on/off",
+        "/client on|off   start/stop web UI server (same process)",
+        "/update          check npm for a new version",
         "/exit            quit",
       ].join("\n"),
     );
@@ -204,30 +326,55 @@ while (true) {
     } else {
       try {
         const job = jobs.kill(id);
-        logger.log("job", { event: "kill", id: job.id, status: job.status, command: job.command });
         ui.log(`job ${job.id}: ${job.status}`);
       } catch (e: any) {
-        logger.error(e.message);
         ui.error(e.message);
       }
     }
-  } else if (input === "/logs" || input.startsWith("/logs ")) {
-    const n = Number(input.split(/\s+/)[1]) || 20;
-    const lines = await logger.tail(n);
-    ui.log(`log: ${logger.path}\n${lines.join("\n") || "(empty)"}`);
+  } else if (input === "/img") {
+    ui.log(
+      pendingImage
+        ? `image ready: ${pendingImage.path} (${fmtSize(pendingImage.bytes)}) — type your question`
+        : "usage: /img <path>   (attached to the next message)",
+    );
+  } else if (input.startsWith("/img ")) {
+    const arg = input.slice(4).trim();
+    if (arg === "clear") {
+      pendingImage = null;
+      ui.log("image removed");
+    } else {
+      try {
+        pendingImage = await loadImage(arg);
+        ui.log(`image ready: ${pendingImage.path} (${fmtSize(pendingImage.bytes)}) — type your question`);
+      } catch (e: any) {
+        ui.error(e.message);
+      }
+    }
   } else if (input.startsWith("/model")) {
+    if (runtime.runLock.busy) {
+      ui.warn("agent is busy — switch the model later");
+      continue;
+    }
     agent.model = input.split(" ")[1] ?? agent.model;
-    logger.model(agent.model);
     ui.log(`model: ${agent.model}`);
   } else {
+    if (!runtime.runLock.tryAcquire()) {
+      ui.warn("web client chat is running — use /client off or wait");
+      continue;
+    }
     busy = true;
+    const images = pendingImage ? [pendingImage.base64] : [];
+    if (pendingImage) {
+      ui.log(`+ image: ${pendingImage.path}`);
+      pendingImage = null;
+    }
     try {
-      await agent.run(input);
+      await agent.run(input, images);
     } catch (e: any) {
-      logger.error(e.message);
       ui.error(e.message);
     } finally {
       busy = false;
+      runtime.runLock.release();
     }
   }
   if (closing) break;

@@ -1,6 +1,8 @@
 import type { Message, Ollama, ToolCall } from "ollama";
-import type { AgentLog, LogType } from "../log/SessionLogger";
 import type { Tool } from "../tools/Tool";
+import type { LlmSettings } from "../config/Config";
+import type { SkillStore } from "../skills/SkillStore";
+import { readText } from "../util/Fs";
 
 export interface AgentUI {
     assistantStart(): void;
@@ -15,44 +17,83 @@ export interface AgentUI {
     warn?(msg: string): void;
     confirm(name: string, args: Record<string, any>, preview?: string, warnings?: string[]): Promise<boolean>;
     confirmStrict(): Promise<boolean>;
+    /** Approval for exiting plan mode; falls back to confirm() if unavailable. */
+    approvePlan?(plan: string): Promise<boolean>;
 }
 
-/** Env se positive integer, warna fallback. 0/NaN/"abc" ignore ho jate hain. */
+/** Read a positive integer from env, otherwise use fallback. 0/NaN/"abc" are ignored. */
 function envInt(name: string, fallback: number): number {
     const n = Number(process.env[name]);
     return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
-/** Ollama/Bun ke timeout errors detect karo, taake sirf unhi pe context chhota karke retry ho. */
+/** Detect Ollama/Bun timeout errors so retries only shrink context for those cases. */
 function isTimeoutError(e: unknown): boolean {
     const msg = e instanceof Error ? `${e.name} ${e.message}` : String(e);
     return /timeout|timed out|abort|aborted/i.test(msg);
 }
 
-/** Ollama ka default num_ctx 4096 hai, isliye model ki max context khud detect karte hain. */
+/** Transient network/server errors: safe to retry the same request. */
+function isTransientError(e: unknown): boolean {
+    const msg = e instanceof Error ? `${e.name} ${e.message}` : String(e);
+    return /ECONNREFUSED|ECONNRESET|EPIPE|ETIMEDOUT|EAI_AGAIN|fetch failed|socket hang up|network|overloaded|\b(429|500|502|503|504)\b/i.test(
+        msg,
+    );
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Optional fallback if the model has no metadata. */
 const FALLBACK_NUM_CTX = 32_768;
+/** Shrinking context below this is not useful. */
+const MIN_NUM_CTX = 4_096;
+/** Approved plan khud chalte waqt model kitni baar ruk kar nudge accept kare. */
+const MAX_AUTO_CONTINUE = 10;
+/** Number of retries for network/5xx errors. */
+const MAX_TRANSIENT_RETRIES = 3;
+/** These file mutations do not require reconfirmation inside an approved plan. */
+const PLAN_WRITES = new Set([
+    "write_file",
+    "edit_file",
+    "replace_lines",
+    "delete_file",
+    "move_file",
+    "make_dir",
+]);
 const NUM_PREDICT = envInt("OLLAMA_NUM_PREDICT", 4_096);
 const TEMPERATURE = (() => {
     const n = Number(process.env.OLLAMA_TEMPERATURE);
     return Number.isFinite(n) && n >= 0 ? n : 0.4;
 })();
 
-/** Tool chalne se pehle check. String return karo to tool block hota hai aur wo string model ko error ban kar jati hai. */
+/** Pre-tool check. Returning a string blocks the tool and sends that string to the model as an error. */
 export interface Guard {
     check(tool: Tool, args: Record<string, any>): Promise<string | undefined>;
     reset?(): void;
 }
 
+/** Messages added to the conversation by the agent (for history storage). */
+export interface AgentMessageEvent {
+    role: "user" | "assistant";
+    content: string;
+    thinking?: string;
+}
+
 /** Persona lives in persona.md so it can be edited without touching the app. */
-const PERSONA = (await Bun.file(new URL("./persona.md", import.meta.url)).text()).trim();
+const PERSONA = (await readText(new URL("./persona.md", import.meta.url))).trim();
 
 export class Agent {
     private tools = new Map<string, Tool>();
     private guards: Guard[] = [];
-    private logs: AgentLog[] = [];
     private contexts: (() => string)[] = [];
     private messages: Message[] = [];
     private ctxByModel = new Map<string, number>();
+    private messageSink?: (msg: AgentMessageEvent) => void;
+    private skills?: SkillStore;
+    private planModeGetter?: () => boolean;
+    /** After plan approval: if todos remain, let the model continue on its own. */
+    private continueCheck?: () => boolean;
+    private autoContinues = 0;
     public think = false;
 
     constructor(
@@ -60,6 +101,7 @@ export class Agent {
         public model: string,
         private ui: AgentUI,
         private cwd: string,
+        private llm: LlmSettings = {},
     ) {
         this.reset();
     }
@@ -72,27 +114,79 @@ export class Agent {
         this.guards.push(guard);
     }
 
-    addLogger(log: AgentLog) {
-        this.logs.push(log);
+    /** Swap UI for a run (TUI ↔ web client); runs remain serialized. */
+    setUI(ui: AgentUI) {
+        this.ui = ui;
     }
 
-    private logEvent(type: LogType, data: Record<string, unknown> = {}) {
-        this.logs.forEach((log) => log.event?.(type, data));
+    /** Har user/assistant message ek sink ko do (SQLite history). */
+    onMessage(sink: (msg: AgentMessageEvent) => void) {
+        this.messageSink = sink;
     }
 
-    /** Har run ke system prompt me extra live context (jaise current todo plan). */
+    /** Extra live context for the system prompt (e.g. current todo plan). */
     addContext(provider: () => string) {
         this.contexts.push(provider);
+    }
+
+    /** Only the `.ai` skills index goes into the system prompt; full text loads via the `skill` tool. */
+    useSkills(store: SkillStore) {
+        this.skills = store;
+    }
+
+    /** Live plan-mode state (shared by the TUI and web). */
+    setPlanMode(getter: () => boolean) {
+        this.planModeGetter = getter;
+    }
+
+    /** Approval for exit_plan — requested through the active UI. */
+    async approvePlan(plan: string): Promise<boolean> {
+        if (this.ui.approvePlan) return this.ui.approvePlan(plan);
+        return this.ui.confirm("exit_plan", { plan }, plan);
+    }
+
+    /**
+     * Execute an approved plan autonomously: if the model stops and todos remain,
+     * send a nudge and continue the loop.
+     */
+    startPlanExecution(check: () => boolean) {
+        this.continueCheck = check;
+        this.autoContinues = 0;
+    }
+
+    /** File edits are pre-approved inside an approved plan; commands like bash/git are not. */
+    private planWriteApproved(tool: Tool): boolean {
+        return !!this.continueCheck?.() && PLAN_WRITES.has(tool.name);
+    }
+
+    /** Reload prior chat into context (tool/todo runtime state stays fresh). */
+    loadHistory(items: { role: string; content: string; thinking?: string }[]) {
+        const past: Message[] = items
+            .filter((m) => (m.role === "user" || m.role === "assistant") && m.content.trim())
+            .map((m) => ({
+                role: m.role as "user" | "assistant",
+                content: m.content,
+                ...(m.thinking ? { thinking: m.thinking } : {}),
+            }));
+        this.messages = [{ role: "system", content: this.systemPrompt() }, ...past];
     }
 
     listTools() {
         return [...this.tools.values()];
     }
 
-    /** Model ki max context length. Env override ho to wahi, warna Ollama ke model_info se. */
+    /**
+     * Model context length. Prefer env, then config (`llm.num_ctx`), then the model maximum.
+     * Default config is `"max"`, so each model uses its full context.
+     */
     private async numCtx(): Promise<number> {
         const fromEnv = Number(process.env.OLLAMA_NUM_CTX);
         if (Number.isFinite(fromEnv) && fromEnv > 0) return Math.floor(fromEnv);
+
+        const configured = this.llm.num_ctx;
+        if (typeof configured === "number" && Number.isFinite(configured) && configured > 0) {
+            return Math.floor(configured);
+        }
 
         const cached = this.ctxByModel.get(this.model);
         if (cached) return cached;
@@ -119,7 +213,7 @@ export class Agent {
         this.guards.forEach((g) => g.reset?.()); // /clear pe docs-read list bhi saaf
     }
 
-    /** Persona + live system info, taake Noni ko pata ho kahan chal rahi hai */
+    /** Persona + live system info, so Noni knows where it is running */
     private systemPrompt() {
         const tools = this.listTools().map((t) => t.name).join(", ") || "none";
         const os = ({ linux: "Linux", darwin: "macOS", win32: "Windows" } as Record<string, string>)[process.platform] ?? process.platform;
@@ -134,52 +228,65 @@ export class Agent {
             })
             .filter(Boolean)
             .join("\n\n");
+        const skills = this.skills?.renderIndex() ?? "";
+        const planMode = this.planModeGetter?.() ?? false;
         return `${PERSONA}
 
 ## Environment (live, authoritative)
 - Operating system: ${os} (${arch})
 - Working directory: ${this.cwd}
 - Shell: bash -lc; user shell: ${process.env.SHELL ?? "unknown"}
-- Runtime: Bun ${Bun.version} (JavaScript/TypeScript)
+- Runtime: JavaScript on ${process.release?.name ?? "node"} ${process.version}
 - Date: ${new Date().toISOString().slice(0, 10)}
 - Model: ${this.model}
 - Tools: ${tools}
 - Paths: relative to the working directory (e.g. src/index.ts). Don't wander outside it.
 - For battery, CPU, memory, disk and uptime, use the system_info tool. Never guess hardware numbers.
 - If the user asks about the system, answer from this block. Do not guess or contradict it.
-${extra ? `\n## Current plan (live)\n${extra}\n` : ""}`;
+${planMode ? `\n## Plan mode (ACTIVE — read-only)\nYou may not edit files, create or delete anything, run commands, install, or commit. Investigate with read-only tools (read_file, list_dir, glob, grep, rag, read_docs, web_search, web_fetch, git status/diff/log/show, system_info, todo, skill), then submit a short nested plan with exit_plan {"plan":"1. ...\\n  1.1 ..."}. The user must approve it before any change happens. If the user asks you to edit now, explain that plan mode is on and present the plan first.\n` : ""}${skills ? `\n## Skills (index only — load full text with the skill tool)\n${skills}\n` : ""}${extra ? `\n## Current plan (live)\n${extra}\n` : ""}
+## Reminder (always true)
+- NONI is female and uses she/her pronouns. Keep self-references gender-consistent in English.
+- One short dry joke is fine. Two is a stand-up set, and this is a terminal.`;
     }
 
-    async run(input: string) {
-        // Har run pe system prompt refresh, taake model/tools/date current rahe
-        this.messages[0] = { role: "system", content: this.systemPrompt() };
-        this.messages.push({ role: "user", content: input });
-
-        const startedAt = Date.now();
-        this.logEvent("agent_start", { model: this.model, messages: this.messages.length, think: this.think });
+    /** Whether the model accepts vision (image) input — from Ollama capabilities, cached per model */
+    private visionByModel = new Map<string, boolean>();
+    async supportsVision(): Promise<boolean> {
+        const cached = this.visionByModel.get(this.model);
+        if (cached !== undefined) return cached;
         try {
-            await this.loop();
-        } finally {
-            this.logEvent("agent_end", { duration_ms: Date.now() - startedAt, messages: this.messages.length });
+            const info: any = await this.ollama.show({ model: this.model });
+            const caps: string[] = Array.isArray(info?.capabilities) ? info.capabilities : [];
+            const ok = caps.includes("vision");
+            this.visionByModel.set(this.model, ok);
+            return ok;
+        } catch {
+            return false;
         }
     }
 
-    /** LLM -> tools -> LLM ... jab tak tool call aati rahe */
+    async run(input: string, images: string[] = []) {
+        // New user turn = stop previous plan auto-run
+        this.continueCheck = undefined;
+        this.autoContinues = 0;
+        // Refresh the system prompt on every run so model/tools/date stay current
+        this.messages[0] = { role: "system", content: this.systemPrompt() };
+        this.messages.push({ role: "user", content: input, ...(images.length ? { images } : {}) });
+        this.messageSink?.({ role: "user", content: input });
+
+        await this.loop();
+    }
+
+    /** LLM -> tools -> LLM ... while tool calls continue */
     private async loop() {
-        // Agar model timeout ho, isi run ke baaki calls half context pe karo
+        // If the model times out, use half context for remaining calls in this run
         let ctxOverride: number | undefined;
+        // Consecutive network/5xx failures; reset on a successful stream
+        let transientRetries = 0;
 
         while (true) {
             this.ui.waiting?.();
             let numCtx = ctxOverride ?? (await this.numCtx());
-            const chatStarted = Date.now();
-            this.logEvent("model_request", {
-                model: this.model,
-                num_ctx: numCtx,
-                num_predict: NUM_PREDICT,
-                messages: this.messages.length,
-                tools: this.listTools().length,
-            });
             const open = () =>
                 this.ollama.chat({
                     model: this.model,
@@ -196,16 +303,28 @@ ${extra ? `\n## Current plan (live)\n${extra}\n` : ""}`;
                 });
 
             let stream;
-            try {
-                stream = await open();
-            } catch (e) {
-                if (!isTimeoutError(e)) throw e;
-                const reason = e instanceof Error ? e.message : String(e);
-                numCtx = Math.max(4_096, Math.floor(numCtx / 2));
-                ctxOverride = numCtx;
-                this.logEvent("model_retry", { phase: "request", reason, num_ctx: numCtx });
-                this.ui.warn?.(`model request timed out; retrying with num_ctx=${numCtx}...`);
-                stream = await open();
+            while (true) {
+                try {
+                    stream = await open();
+                    break;
+                } catch (e) {
+                    if (isTimeoutError(e) && numCtx > MIN_NUM_CTX) {
+                        numCtx = Math.max(MIN_NUM_CTX, Math.floor(numCtx / 2));
+                        ctxOverride = numCtx;
+                        this.ui.warn?.(`model request timed out; retrying with num_ctx=${numCtx}...`);
+                        continue;
+                    }
+                    if (transientRetries < MAX_TRANSIENT_RETRIES && isTransientError(e)) {
+                        transientRetries++;
+                        this.ui.warn?.(
+                            `model request failed (${e instanceof Error ? e.message : String(e)}); ` +
+                                `retry ${transientRetries}/${MAX_TRANSIENT_RETRIES}...`,
+                        );
+                        await sleep(400 * transientRetries);
+                        continue;
+                    }
+                    throw e;
+                }
             }
 
             let content = "";
@@ -234,45 +353,72 @@ ${extra ? `\n## Current plan (live)\n${extra}\n` : ""}`;
                     if (msg.tool_calls?.length) calls.push(...msg.tool_calls);
                 }
             } catch (e) {
-                // Sirf tab retry karo jab abhi tak kuch screen pe na aaya ho
-                if (!started && !thinking && !calls.length && isTimeoutError(e)) {
-                    const reason = e instanceof Error ? e.message : String(e);
-                    numCtx = Math.max(4_096, Math.floor(numCtx / 2));
+                // Retry only when nothing has been rendered yet
+                const clean = !started && !thinking && !calls.length;
+                if (clean && isTimeoutError(e) && numCtx > MIN_NUM_CTX) {
+                    numCtx = Math.max(MIN_NUM_CTX, Math.floor(numCtx / 2));
                     ctxOverride = numCtx;
-                    this.logEvent("model_retry", { phase: "stream", reason, num_ctx: numCtx });
                     this.ui.warn?.(`model stream timed out; retrying with num_ctx=${numCtx}...`);
                     continue;
                 }
-                this.logEvent("error", { phase: "model", message: e instanceof Error ? e.message : String(e) });
+                if (clean && !isTimeoutError(e) && isTransientError(e) && transientRetries < MAX_TRANSIENT_RETRIES) {
+                    transientRetries++;
+                    this.ui.warn?.(
+                        `model stream failed (${e instanceof Error ? e.message : String(e)}); ` +
+                            `retry ${transientRetries}/${MAX_TRANSIENT_RETRIES}...`,
+                    );
+                    await sleep(400 * transientRetries);
+                    continue;
+                }
                 throw e;
             }
+
+            transientRetries = 0;
 
             this.ui.waitingEnd?.();
             if (thinking) this.ui.thinkingEnd?.();
             if (started) this.ui.assistantEnd();
-            this.logEvent("model_response", {
-                duration_ms: Date.now() - chatStarted,
-                done_reason: doneReason,
-                content_chars: content.length,
-                thinking_chars: thinking.length,
-                tool_calls: calls.length,
-                num_ctx: numCtx,
-            });
             if (doneReason === "length") {
                 this.ui.warn?.(
                     `reply cut short: model limit hit (num_ctx=${numCtx}, num_predict=${NUM_PREDICT}). ` +
-                        `Chat lambi hai to /clear karo; lamba jawab chahiye to OLLAMA_NUM_PREDICT badha do.`,
+                        `Use /clear if the chat is long; increase OLLAMA_NUM_PREDICT for longer replies.`,
                 );
             }
-
-            if (content || thinking) this.logs.forEach((log) => log.assistant(content, thinking || undefined));
 
             const reply: Message = { role: "assistant", content };
             if (thinking) reply.thinking = thinking;
             if (calls.length) reply.tool_calls = calls;
             this.messages.push(reply);
+            if (content || thinking) {
+                this.messageSink?.({
+                    role: "assistant",
+                    content,
+                    thinking: thinking || undefined,
+                });
+            }
 
-            if (!calls.length) return;
+            if (!calls.length) {
+                // Approved plan still has todos? Continue the model silently.
+                if (this.continueCheck?.()) {
+                    if (this.autoContinues < MAX_AUTO_CONTINUE) {
+                        this.autoContinues++;
+                        this.messages.push({
+                            role: "user",
+                            content:
+                                "Continue the approved plan on your own. " +
+                                'Call todo {"action":"next"}, do that step, mark it done with ' +
+                                'todo {"action":"done","id":"..."}, then move to the next one. ' +
+                                "Do not stop to ask for permission between steps; only stop when every todo is done or you are blocked.",
+                        });
+                        continue;
+                    }
+                    this.ui.warn?.(
+                        `plan auto-run paused: model stopped ${MAX_AUTO_CONTINUE} times with todos left. ` +
+                            'Send "continue" to resume.',
+                    );
+                }
+                return;
+            }
 
             for (const call of calls) {
                 const { name, arguments: args } = call.function;
@@ -284,25 +430,18 @@ ${extra ? `\n## Current plan (live)\n${extra}\n` : ""}`;
     private async execute(name: string, args: Record<string, any>): Promise<string> {
         const started = Date.now();
         const tool = this.tools.get(name);
-        if (!tool) {
-            this.logEvent("error", { phase: "tool", tool: name, message: "unknown tool" });
-            return this.fail(`unknown tool ${name}`, name, started);
-        }
+        if (!tool) return this.fail(`unknown tool ${name}`, name, started);
 
         this.ui.toolCall(name, args);
-        this.logs.forEach((log) => log.toolCall(name, args));
 
         try {
-            // Guards dangerous-confirm se pehle: blocked edit pe user ko bekar confirm na dikhe
+            // Run guards before dangerous confirmation: blocked edits should not prompt the user
             for (const guard of this.guards) {
                 const blocked = await guard.check(tool, args);
-                if (blocked) {
-                    this.logEvent("guard_block", { tool: name, reason: blocked });
-                    return this.fail(blocked, name, started);
-                }
+                if (blocked) return this.fail(blocked, name, started);
             }
 
-            if (tool.dangerousFor(args)) {
+            if (tool.dangerousFor(args) && !this.planWriteApproved(tool)) {
                 const warnings = tool.warnings(args);
                 const preview = await tool.preview?.(args);
                 if (!(await this.ui.confirm(name, args, preview, warnings))) {
@@ -324,9 +463,7 @@ ${extra ? `\n## Current plan (live)\n${extra}\n` : ""}`;
             } finally {
                 this.ui.waitingEnd?.();
             }
-            const duration = Date.now() - started;
             this.ui.toolResult(out, false);
-            this.logs.forEach((log) => log.toolResult(name, out, false, duration));
             return out;
         } catch (e: any) {
             return this.fail(e.message, name, started);
@@ -335,10 +472,6 @@ ${extra ? `\n## Current plan (live)\n${extra}\n` : ""}`;
 
     private fail(msg: string, toolName?: string, startedAt?: number): string {
         this.ui.toolResult(msg, true);
-        if (toolName) {
-            const duration = startedAt === undefined ? undefined : Date.now() - startedAt;
-            this.logs.forEach((log) => log.toolResult(toolName, msg, true, duration));
-        }
         return `Error: ${msg}`;
     }
 }

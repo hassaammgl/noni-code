@@ -1,6 +1,7 @@
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { DocSource, extractRelevant, MAX_DOC_CHARS, runCmd, type DocPage, type DocRequest, type Lang } from "./DocSource";
+import { exists, readJson, readText } from "../util/Fs";
 
 /** JS/TS: project ke node_modules me installed package ka README + type definitions ka pata */
 export class NodeModulesSource extends DocSource {
@@ -16,21 +17,21 @@ export class NodeModulesSource extends DocSource {
 
     async find({ name, topic }: DocRequest): Promise<DocPage | null> {
         const dir = join(this.root, "node_modules", name);
-        const pkgFile = Bun.file(join(dir, "package.json"));
-        if (!(await pkgFile.exists())) return null;
-        const pkg = (await pkgFile.json()) as Record<string, any>;
+        const pkgPath = join(dir, "package.json");
+        if (!(await exists(pkgPath))) return null;
+        const pkg = await readJson<Record<string, any>>(pkgPath);
 
         let readme = "";
         for (const f of ["README.md", "readme.md", "Readme.md", "README.markdown", "README"]) {
-            const file = Bun.file(join(dir, f));
-            if (await file.exists()) {
-                readme = await file.text();
+            const file = join(dir, f);
+            if (await exists(file)) {
+                readme = await readText(file);
                 break;
             }
         }
 
         const types: string | undefined =
-            pkg.types ?? pkg.typings ?? ((await Bun.file(join(dir, "index.d.ts")).exists()) ? "index.d.ts" : undefined);
+            pkg.types ?? pkg.typings ?? ((await exists(join(dir, "index.d.ts"))) ? "index.d.ts" : undefined);
 
         return {
             source: "installed package",
@@ -92,8 +93,8 @@ function grepContext(text: string, topic: string, ctx = 3, max = MAX_DOC_CHARS):
 }
 
 /**
- * System me jo code/docs pehle se hain: Python (pydoc), Go (go doc), C/C++ (man pages + /usr/include headers).
- * Internet ki zaroorat nahi.
+ * Uses docs/code already available on the system: Python (pydoc), Go (go doc), C/C++ (man pages + /usr/include headers).
+ * No internet required.
  */
 export class SystemSource extends DocSource {
     readonly label = "system";
@@ -113,11 +114,11 @@ export class SystemSource extends DocSource {
     }
 
     private async pydoc({ name, topic }: DocRequest): Promise<DocPage | null> {
-        // topic "dumps" ho to pehle "json.dumps" try karo
+        // if topic is "dumps", try "json.dumps" first
         const candidates = topic && /^[A-Za-z_][\w.]*$/.test(topic) ? [`${name}.${topic}`, name] : [name];
         for (const c of candidates) {
             const r = await runCmd(["python3", "-m", "pydoc", c]);
-            if (!r) return null; // python3 nahi hai
+            if (!r) return null; // python3 unavailable
             const out = r.out.trim();
             if (r.code === 0 && out && !out.startsWith("No Python documentation found")) {
                 return { source: "pydoc (local Python)", location: `python3 -m pydoc ${c}`, text: extractRelevant(out, topic) };
@@ -137,7 +138,7 @@ export class SystemSource extends DocSource {
         for (const section of ["3", "2"]) {
             const r = await runCmd(["man", "-P", "cat", section, name], { env: { MANWIDTH: "100" } });
             const out = r?.out.replace(/.\x08/g, "").trim() ?? "";
-            // asli man page me "NAME" heading hoti hai (minimized systems "no man pages" notice exit 0 ke saath dete hain)
+            // a real man page contains a "NAME" heading (minimal systems may print a notice and exit 0)
             if (r && r.code === 0 && /^NAME\s*$/m.test(out) && !/No manual entry/i.test(out)) {
                 return { source: `man page (section ${section})`, location: `man ${section} ${name}`, text: extractRelevant(out, topic) };
             }
@@ -145,13 +146,13 @@ export class SystemSource extends DocSource {
 
         const header = await findHeader(name);
         if (!header) return null;
-        const src = await Bun.file(header).text();
+        const src = await readText(header);
         const text = (topic && grepContext(src, topic)) || src.slice(0, MAX_DOC_CHARS);
         return {
             source: "system header",
             location: header,
             text,
-            hint: `Poori file: bash \`sed -n '1,200p' ${header}\` ya \`grep -n <symbol> ${header}\` (read_file sirf workspace me chalta hai)`,
+            hint: `Full file: bash \`sed -n '1,200p' ${header}\` or \`grep -n <symbol> ${header}\` (read_file works only inside the workspace)`,
         };
     }
 }

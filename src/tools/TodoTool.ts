@@ -10,8 +10,8 @@ function requireId(raw: unknown): string {
 }
 
 /**
- * Agent ka planner. Bada kaam pehle nested plan me todo, phir next -> kaam -> done.
- * Ye tool sirf state rakhta hai; asli kaam baaki tools se hota hai.
+ * Agent planner. Break large work into a nested plan, then next -> work -> done.
+ * This tool only manages state; actual work is done by other tools.
  */
 export class TodoTool extends Tool {
     name = "todo";
@@ -75,7 +75,7 @@ export class TodoTool extends Tool {
 
     async run(args: Record<string, any>) {
         const rawAction = String(args.action ?? "").trim().toLowerCase();
-        // Chhota model action bhool jaye to shape se infer karo
+        // If a small model omits action, infer it from the payload shape
         const action =
             rawAction ||
             (args.tasks !== undefined || args.outline !== undefined ? "plan" : args.title !== undefined ? "add" : "list");

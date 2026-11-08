@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
 import { arch, cpus, freemem, hostname, loadavg, release, totalmem, type, uptime } from "node:os";
 import { Tool } from "./Tool";
@@ -16,14 +17,11 @@ function duration(seconds: number) {
 }
 
 async function sh(cmd: string) {
-    try {
-        const proc = Bun.spawn(["bash", "-lc", cmd], { stdout: "pipe", stderr: "ignore", stdin: "ignore" });
-        const out = await new Response(proc.stdout).text();
-        await proc.exited;
-        return out.trim();
-    } catch {
-        return "";
-    }
+    return await new Promise<string>((resolve) => {
+        execFile("bash", ["-lc", cmd], { timeout: 10_000, maxBuffer: 1_000_000 }, (_err, stdout) => {
+            resolve(String(stdout ?? "").trim());
+        });
+    });
 }
 
 async function distro() {

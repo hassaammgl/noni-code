@@ -1,8 +1,9 @@
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Tool } from "../tools/Tool";
+import type { McpServerConfig } from "../config/Config";
 
-/** MCP server ka har tool ek normal Tool ban jata hai */
+/** Each MCP server tool becomes a normal Tool. */
 class McpTool extends Tool {
     override dangerous = true;
     constructor(
@@ -25,14 +26,10 @@ class McpTool extends Tool {
 export class McpManager {
     private clients: Client[] = [];
 
-    /** mcp.json se enabled servers connect karo aur unke tools return karo */
-    async load(configPath: string): Promise<Tool[]> {
-        const file = Bun.file(configPath);
-        if (!(await file.exists())) return [];
-        const { servers = {} } = await file.json();
-
+    /** Connect configured/enabled servers and return their tools. */
+    async load(servers: Record<string, McpServerConfig> = {}): Promise<Tool[]> {
         const tools: Tool[] = [];
-        for (const [server, cfg] of Object.entries<any>(servers)) {
+        for (const [server, cfg] of Object.entries(servers)) {
             if (cfg.disabled) continue;
             try {
                 const client = new Client({ name: "mini-code", version: "0.1.0" });
