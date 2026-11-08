@@ -1,6 +1,7 @@
 import type { Message, Ollama, ToolCall } from "ollama";
 import type { Tool } from "../tools/Tool";
 import type { LlmSettings } from "../config/Config";
+import type { SkillStore } from "../skills/SkillStore";
 import { readText } from "../util/Fs";
 
 export interface AgentUI {
@@ -16,6 +17,8 @@ export interface AgentUI {
     warn?(msg: string): void;
     confirm(name: string, args: Record<string, any>, preview?: string, warnings?: string[]): Promise<boolean>;
     confirmStrict(): Promise<boolean>;
+    /** Plan mode exit ke liye approval; na ho to confirm() fallback. */
+    approvePlan?(plan: string): Promise<boolean>;
 }
 
 /** Env se positive integer, warna fallback. 0/NaN/"abc" ignore ho jate hain. */
@@ -30,8 +33,33 @@ function isTimeoutError(e: unknown): boolean {
     return /timeout|timed out|abort|aborted/i.test(msg);
 }
 
-/** Ollama ka default num_ctx 4096 hai, isliye model ki max context khud detect karte hain. */
+/** Transient network/server errors: inhe wahi request dobara bhej kar retry kar sakte hain. */
+function isTransientError(e: unknown): boolean {
+    const msg = e instanceof Error ? `${e.name} ${e.message}` : String(e);
+    return /ECONNREFUSED|ECONNRESET|EPIPE|ETIMEDOUT|EAI_AGAIN|fetch failed|socket hang up|network|overloaded|\b(429|500|502|503|504)\b/i.test(
+        msg,
+    );
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Optional fallback if the model has no metadata. */
 const FALLBACK_NUM_CTX = 32_768;
+/** Isse neeche context chhota karna bekaar hai. */
+const MIN_NUM_CTX = 4_096;
+/** Approved plan khud chalte waqt model kitni baar ruk kar nudge accept kare. */
+const MAX_AUTO_CONTINUE = 10;
+/** Network/5xx errors pe kitni baar dobara try karein. */
+const MAX_TRANSIENT_RETRIES = 3;
+/** Approved plan ke andar ye file mutations dobara confirm nahi maangte. */
+const PLAN_WRITES = new Set([
+    "write_file",
+    "edit_file",
+    "replace_lines",
+    "delete_file",
+    "move_file",
+    "make_dir",
+]);
 const NUM_PREDICT = envInt("OLLAMA_NUM_PREDICT", 4_096);
 const TEMPERATURE = (() => {
     const n = Number(process.env.OLLAMA_TEMPERATURE);
@@ -61,6 +89,11 @@ export class Agent {
     private messages: Message[] = [];
     private ctxByModel = new Map<string, number>();
     private messageSink?: (msg: AgentMessageEvent) => void;
+    private skills?: SkillStore;
+    private planModeGetter?: () => boolean;
+    /** Plan approve hone ke baad: todos bache hain to model ko khud aage badhne do. */
+    private continueCheck?: () => boolean;
+    private autoContinues = 0;
     public think = false;
 
     constructor(
@@ -89,6 +122,36 @@ export class Agent {
     /** Har user/assistant message ek sink ko do (SQLite history). */
     onMessage(sink: (msg: AgentMessageEvent) => void) {
         this.messageSink = sink;
+    }
+
+    /** `.ai` skills ka sirf index system prompt me jata hai; poora text `skill` tool se load hota hai. */
+    useSkills(store: SkillStore) {
+        this.skills = store;
+    }
+
+    /** Plan mode live state (TUI aur web ek hi switch use karte hain). */
+    setPlanMode(getter: () => boolean) {
+        this.planModeGetter = getter;
+    }
+
+    /** exit_plan ke liye approval — UI jahan hai wahin se poocha jata hai. */
+    async approvePlan(plan: string): Promise<boolean> {
+        if (this.ui.approvePlan) return this.ui.approvePlan(plan);
+        return this.ui.confirm("exit_plan", { plan }, plan);
+    }
+
+    /**
+     * Approved plan ko khud execute karo: agar model beech me ruk jaye aur
+     * todos abhi bache hon, ek nudge bhej kar loop continue karo.
+     */
+    startPlanExecution(check: () => boolean) {
+        this.continueCheck = check;
+        this.autoContinues = 0;
+    }
+
+    /** Approved plan ke file edits pre-approved; bash/git jaise commands nahi. */
+    private planWriteApproved(tool: Tool): boolean {
+        return !!this.continueCheck?.() && PLAN_WRITES.has(tool.name);
     }
 
     /** Purani chat ko context me wapas load karo (tools/todos wali state fresh rahegi). */
@@ -165,6 +228,8 @@ export class Agent {
             })
             .filter(Boolean)
             .join("\n\n");
+        const skills = this.skills?.renderIndex() ?? "";
+        const planMode = this.planModeGetter?.() ?? false;
         return `${PERSONA}
 
 ## Environment (live, authoritative)
@@ -178,7 +243,7 @@ export class Agent {
 - Paths: relative to the working directory (e.g. src/index.ts). Don't wander outside it.
 - For battery, CPU, memory, disk and uptime, use the system_info tool. Never guess hardware numbers.
 - If the user asks about the system, answer from this block. Do not guess or contradict it.
-${extra ? `\n## Current plan (live)\n${extra}\n` : ""}
+${planMode ? `\n## Plan mode (ACTIVE — read-only)\nYou may not edit files, create or delete anything, run commands, install, or commit. Investigate with read-only tools (read_file, list_dir, glob, grep, read_docs, web_search, web_fetch, git status/diff/log/show, system_info, todo, skill), then submit a short nested plan with exit_plan {"plan":"1. ...\\n  1.1 ..."}. The user must approve it before any change happens. If the user asks you to edit now, explain that plan mode is on and present the plan first.\n` : ""}${skills ? `\n## Skills (index only — load full text with the skill tool)\n${skills}\n` : ""}${extra ? `\n## Current plan (live)\n${extra}\n` : ""}
 ## Reminder (always true)
 - NONI is female: every Hindi/Urdu verb about yourself is feminine — "kar rahi hoon", "bataungi", "dekhi thi", "chala rahi hoon".
 - One short dry joke is fine. Two is a stand-up set, and this is a terminal.`;
@@ -201,6 +266,9 @@ ${extra ? `\n## Current plan (live)\n${extra}\n` : ""}
     }
 
     async run(input: string, images: string[] = []) {
+        // Naya user turn = purana plan auto-run khatam
+        this.continueCheck = undefined;
+        this.autoContinues = 0;
         // Har run pe system prompt refresh, taake model/tools/date current rahe
         this.messages[0] = { role: "system", content: this.systemPrompt() };
         this.messages.push({ role: "user", content: input, ...(images.length ? { images } : {}) });
@@ -213,6 +281,8 @@ ${extra ? `\n## Current plan (live)\n${extra}\n` : ""}
     private async loop() {
         // Agar model timeout ho, isi run ke baaki calls half context pe karo
         let ctxOverride: number | undefined;
+        // Lagataar network/5xx failures; successful stream pe reset
+        let transientRetries = 0;
 
         while (true) {
             this.ui.waiting?.();
@@ -233,15 +303,28 @@ ${extra ? `\n## Current plan (live)\n${extra}\n` : ""}
                 });
 
             let stream;
-            try {
-                stream = await open();
-            } catch (e) {
-                if (!isTimeoutError(e)) throw e;
-                const reason = e instanceof Error ? e.message : String(e);
-                numCtx = Math.max(4_096, Math.floor(numCtx / 2));
-                ctxOverride = numCtx;
-                this.ui.warn?.(`model request timed out; retrying with num_ctx=${numCtx}...`);
-                stream = await open();
+            while (true) {
+                try {
+                    stream = await open();
+                    break;
+                } catch (e) {
+                    if (isTimeoutError(e) && numCtx > MIN_NUM_CTX) {
+                        numCtx = Math.max(MIN_NUM_CTX, Math.floor(numCtx / 2));
+                        ctxOverride = numCtx;
+                        this.ui.warn?.(`model request timed out; retrying with num_ctx=${numCtx}...`);
+                        continue;
+                    }
+                    if (transientRetries < MAX_TRANSIENT_RETRIES && isTransientError(e)) {
+                        transientRetries++;
+                        this.ui.warn?.(
+                            `model request failed (${e instanceof Error ? e.message : String(e)}); ` +
+                                `retry ${transientRetries}/${MAX_TRANSIENT_RETRIES}...`,
+                        );
+                        await sleep(400 * transientRetries);
+                        continue;
+                    }
+                    throw e;
+                }
             }
 
             let content = "";
@@ -271,15 +354,26 @@ ${extra ? `\n## Current plan (live)\n${extra}\n` : ""}
                 }
             } catch (e) {
                 // Sirf tab retry karo jab abhi tak kuch screen pe na aaya ho
-                if (!started && !thinking && !calls.length && isTimeoutError(e)) {
-                    const reason = e instanceof Error ? e.message : String(e);
-                    numCtx = Math.max(4_096, Math.floor(numCtx / 2));
+                const clean = !started && !thinking && !calls.length;
+                if (clean && isTimeoutError(e) && numCtx > MIN_NUM_CTX) {
+                    numCtx = Math.max(MIN_NUM_CTX, Math.floor(numCtx / 2));
                     ctxOverride = numCtx;
                     this.ui.warn?.(`model stream timed out; retrying with num_ctx=${numCtx}...`);
                     continue;
                 }
+                if (clean && !isTimeoutError(e) && isTransientError(e) && transientRetries < MAX_TRANSIENT_RETRIES) {
+                    transientRetries++;
+                    this.ui.warn?.(
+                        `model stream failed (${e instanceof Error ? e.message : String(e)}); ` +
+                            `retry ${transientRetries}/${MAX_TRANSIENT_RETRIES}...`,
+                    );
+                    await sleep(400 * transientRetries);
+                    continue;
+                }
                 throw e;
             }
+
+            transientRetries = 0;
 
             this.ui.waitingEnd?.();
             if (thinking) this.ui.thinkingEnd?.();
@@ -303,7 +397,28 @@ ${extra ? `\n## Current plan (live)\n${extra}\n` : ""}
                 });
             }
 
-            if (!calls.length) return;
+            if (!calls.length) {
+                // Approved plan ke todos bache hain? Model ko chup-chaap aage badhao.
+                if (this.continueCheck?.()) {
+                    if (this.autoContinues < MAX_AUTO_CONTINUE) {
+                        this.autoContinues++;
+                        this.messages.push({
+                            role: "user",
+                            content:
+                                "Continue the approved plan on your own. " +
+                                'Call todo {"action":"next"}, do that step, mark it done with ' +
+                                'todo {"action":"done","id":"..."}, then move to the next one. ' +
+                                "Do not stop to ask for permission between steps; only stop when every todo is done or you are blocked.",
+                        });
+                        continue;
+                    }
+                    this.ui.warn?.(
+                        `plan auto-run paused: model stopped ${MAX_AUTO_CONTINUE} times with todos left. ` +
+                            'Send "continue" to resume.',
+                    );
+                }
+                return;
+            }
 
             for (const call of calls) {
                 const { name, arguments: args } = call.function;
@@ -326,7 +441,7 @@ ${extra ? `\n## Current plan (live)\n${extra}\n` : ""}
                 if (blocked) return this.fail(blocked, name, started);
             }
 
-            if (tool.dangerousFor(args)) {
+            if (tool.dangerousFor(args) && !this.planWriteApproved(tool)) {
                 const warnings = tool.warnings(args);
                 const preview = await tool.preview?.(args);
                 if (!(await this.ui.confirm(name, args, preview, warnings))) {

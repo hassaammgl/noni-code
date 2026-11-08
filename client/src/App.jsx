@@ -6,6 +6,7 @@ import {
   noniHistoryList,
   noniHistoryLoad,
   noniNewSession,
+  noniSetPlan,
   streamFromNoni,
 } from './lib/noni.js'
 import { createGenerationGate } from './lib/generationGate.js'
@@ -377,6 +378,7 @@ export default function App() {
   const [ollamaModel, setOllamaModel] = useState(loadSavedModel)
   const [noniUp, setNoniUp] = useState(false)
   const [noniMeta, setNoniMeta] = useState(null)
+  const [planMode, setPlanMode] = useState(false)
   const [confirmReq, setConfirmReq] = useState(null)
   const [askReq, setAskReq] = useState(null)
   const [askValue, setAskValue] = useState('')
@@ -393,6 +395,7 @@ export default function App() {
       if (alive) {
         setNoniMeta(info ?? null)
         setNoniUp(!!info?.ok)
+        if (info) setPlanMode(!!info.planMode)
       }
     }
     check()
@@ -411,6 +414,12 @@ export default function App() {
         setConfirmReq(data)
       })
     }
+    if (event === 'plan') {
+      return new Promise((resolve) => {
+        confirmResolveRef.current = resolve
+        setConfirmReq({ ...data, plan: true })
+      })
+    }
     if (event === 'ask') {
       return new Promise((resolve) => {
         askResolveRef.current = resolve
@@ -422,6 +431,7 @@ export default function App() {
   }
 
   function answerConfirm(allow) {
+    if (confirmReq?.plan && allow) setPlanMode(false)
     confirmResolveRef.current?.(allow)
     confirmResolveRef.current = null
     setConfirmReq(null)
@@ -475,6 +485,19 @@ export default function App() {
     }
     setMessages([])
     setHistoryOpen(false)
+  }
+
+  async function togglePlan() {
+    if (!noniUp) return
+    const next = !planMode
+    setPlanMode(next)
+    try {
+      const res = await noniSetPlan(next)
+      setPlanMode(!!res.planMode)
+    } catch (err) {
+      console.warn('plan toggle failed:', err)
+      setPlanMode(!next)
+    }
   }
 
   useEffect(() => {
@@ -924,6 +947,23 @@ export default function App() {
               >
                 + New
               </button>
+              <button
+                type="button"
+                onClick={togglePlan}
+                disabled={!noniUp}
+                title={
+                  noniUp
+                    ? 'Plan mode: read-only investigation, approve the plan before any edit'
+                    : 'Plan mode needs noni serve'
+                }
+                className={`rounded-full border px-2.5 py-1.5 text-[10px] font-medium transition disabled:opacity-35 ${
+                  planMode
+                    ? 'border-violet-400/40 bg-violet-500/20 text-violet-100'
+                    : 'border-white/10 bg-white/[0.04] text-white/60 hover:bg-white/[0.08] hover:text-white'
+                }`}
+              >
+                {planMode ? 'Plan ON' : 'Plan'}
+              </button>
               <div
                 className={`hidden items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[10px] font-medium sm:flex ${status.cls}`}
               >
@@ -1215,13 +1255,20 @@ export default function App() {
         <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/60 p-5 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-3xl border border-white/10 bg-[#0d0d18] p-5 shadow-2xl">
             <p className="text-sm font-semibold text-white">
-              {confirmReq.strict
-                ? 'Risky command — allow anyway?'
-                : `Allow ${confirmReq.name || 'this action'}?`}
+              {confirmReq.plan
+                ? 'Plan ready — approve and execute?'
+                : confirmReq.strict
+                  ? 'Risky command — allow anyway?'
+                  : `Allow ${confirmReq.name || 'this action'}?`}
             </p>
             {confirmReq.preview && (
               <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap rounded-xl bg-black/40 p-3 text-[11px] text-white/70">
                 {confirmReq.preview}
+              </pre>
+            )}
+            {confirmReq.plan && (
+              <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-violet-500/[0.07] p-3 text-[11px] leading-relaxed text-violet-100/80">
+                {confirmReq.plan}
               </pre>
             )}
             {!!confirmReq.warnings?.length && (
@@ -1237,14 +1284,14 @@ export default function App() {
                 onClick={() => answerConfirm(false)}
                 className="rounded-xl border border-white/10 bg-white/[0.04] px-3.5 py-2 text-xs font-medium text-white/70 transition hover:bg-white/[0.08] hover:text-white"
               >
-                Deny
+                {confirmReq.plan ? 'Keep planning' : 'Deny'}
               </button>
               <button
                 type="button"
                 onClick={() => answerConfirm(true)}
                 className="rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 px-3.5 py-2 text-xs font-semibold text-white shadow-lg shadow-violet-950/40 transition hover:brightness-110"
               >
-                Allow
+                {confirmReq.plan ? 'Approve & execute' : 'Allow'}
               </button>
             </div>
           </div>

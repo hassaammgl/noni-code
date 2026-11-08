@@ -45,6 +45,8 @@ First launch shows a model picker. `Enter` picks the smallest installed chat mod
 - **Update check** — startup pe aur long sessions me har 6h npm pe naya version dekhta hai; `/update` se manual.
 - **Web client** — optional React VRM avatar + voice + chat UI (`client/`), `noni serve` ke local bridge se wahi agent/tools chalata hai.
 - **History** — har chat SQLite me save hoti hai; TUI `/history` aur web History button se wapas kholo.
+- **Skills (`.ai`)** — tool/flow instructions markdown packs me; prompt me sirf index, poora text on demand.
+- **Plan mode** — `/plan` se read-only investigation; agent plan deta hai, approve karne par hi edits chalte hain.
 - **Small-model friendly TUI** — compact output, previews before risky edits, spinner with elapsed time.
 
 ## Commands
@@ -61,6 +63,10 @@ First launch shows a model picker. `Enter` picks the smallest installed chat mod
 | `/img clear` | pending image hatao |
 | `/model <name>` | switch model |
 | `/history [id]` | saved sessions list karo / load karo |
+| `/skills` | `.ai` skills list karo |
+| `/skills <name>` | ek skill ka content dekho |
+| `/skills reload` | skills disk se dobara padho |
+| `/plan [on\|off]` | read-only plan mode; approve karne par tools khulte hain |
 | `/clear` | chat clear — naya session |
 | `/think` | toggle model thinking |
 | `/client on [port]` | web UI server **usi process** me start karo (default 4317) |
@@ -151,6 +157,8 @@ ye error screenshot me kya hai?
 | `NONI_NO_UPDATE_CHECK` | — | `1` = update checks skip (offline/CI ke liye) |
 | `NONI_UPDATE_INTERVAL_MS` | `21600000` (6h) | long session me dobara check ka interval |
 | `NONI_HISTORY_DB` | `~/.local/share/noni-chan/history.db` | SQLite chat history path |
+| `NONI_PLAN_MODE` | `on` | plan-first default; `off` = startup se write tools enabled |
+| `NONI_SKILLS_DIR` | — | extra skills folder(s), `:` se separated |
 
 MCP servers come from the global config at `~/.config/noni-chan/config.json` (or `$XDG_CONFIG_HOME/noni-chan/config.json`):
 
@@ -221,6 +229,44 @@ Har user/assistant message SQLite me save hota hai:
 - Web: **History** button, **+ New** naya chat
 - TUI aur web same DB share karte hain
 
+## Skills (`.ai`)
+
+Persona chhoti rehti hai; tool/flow ki detail `.ai/skills/` me markdown packs ke roop me rehti hai.
+
+- System prompt me sirf **index** jata hai (`- name: one-line description`).
+- Agent zarurat par `skill {"action":"read","name":"tools"}` se poora text load karta hai.
+- Built-in skills: `tools`, `workflow`, `bash`, `files`, `docs`, `web`, `git`, `security`, `aiml`, `research`.
+- Apni skill add karo: `<project>/.ai/skills/mera-skill.md` (frontmatter: `name`, `description`).
+- Priority: `<project>/.ai` → `~/.config/noni-chan/.ai` → package `.ai` → `NONI_SKILLS_DIR`.
+- TUI: `/skills`, `/skills <name>`, `/skills reload`.
+
+Format aur examples: `.ai/README.md`.
+
+## Plan mode
+
+Plan-first **default ON** hai: startup pe agent read-only hota hai. `/plan off` se band karo, ya poora default hi badalna ho to `NONI_PLAN_MODE=off` set karo.
+
+`/plan` se read-only planning on/off hota hai (web UI me **Plan** button). Flow:
+
+1. Agent sirf read tools use karta hai — `read_file`, `list_dir`, `glob`, `grep`, `read_docs`, `web_search`, `web_fetch`, `git status/diff/log/show`, `system_info`, `todo`, `skill`.
+2. Jab picture clear ho, wo `exit_plan` tool se nested plan deta hai.
+3. TUI `y/N` poochta hai; web me **Approve & execute** modal aata hai.
+4. Approve → plan mode OFF, plan todo list ban jata hai, aur agent **khud poora plan execute karta hai** — `todo next` → step → `done` → next, beech me permission maangne ke liye nahi rukta. Reject → mode ON rehta hai, agent plan revise karta hai.
+
+Blocked cheezein: `write_file`, `edit_file`, `replace_lines`, `delete_file`, `move_file`, `make_dir`, `bash run/start/kill`, `git add/commit`, aur MCP tools.
+
+Approved plan ke andar file edits (`write_file`, `edit_file`, `replace_lines`, `delete_file`, `move_file`, `make_dir`) dobara Allow nahi maangte — plan approval hi unka approval hai. `bash`, `git commit` jaise commands phir bhi confirm karte hain.
+
+## Retries
+
+- **Plan auto-run** — approved plan ke todos bache hon aur model ruk jaye, to runtime khud "continue" nudge bhejta hai (max 10). Uske baad `plan auto-run paused` warning aata hai.
+- **Timeout** — Ollama request/stream timeout par `num_ctx` aadha karke wahi request dobara chalti hai (minimum 4096).
+- **Network / 5xx** — `ECONNREFUSED`, `ECONNRESET`, `fetch failed`, 429/500/502/503/504 par 3 attempts, 400ms × attempt backoff. Sirf tab jab abhi koi content stream na hua ho, taake duplicate text na dikhe.
+- **Tool failure** — tool ka error model ko wapas jata hai; wo khud doosra approach leta hai. User ne deny kiya to retry nahi hota.
+- **Sab fail ho jaye** — error UI me aata hai; plan adhoora ho to `continue` bhej kar resume karo.
+
+Roadmap aur bache hue gaps: [`TODO.md`](TODO.md).
+
 ## Local development
 
 ```bash
@@ -238,6 +284,8 @@ index.ts              TUI entry point + command loop
 serve.ts              `noni serve` HTTP/SSE entry
 src/app/              shared runtime (agent + tools) and model picker
 src/history/          SQLite chat history (sessions + messages)
+src/plan/             plan mode switch + read-only guard
+src/skills/           `.ai` skill loader (index in prompt, body on demand)
 src/server/           web bridge (SSE + confirm/ask + static client)
 src/agent/            agent loop, guards, persona
 src/tools/            built-in tools
@@ -246,6 +294,7 @@ src/todos/            nested task store
 src/jobs/             background job manager
 src/search/           search providers + fallback engine
 src/ui/               terminal UI
+.ai/                  skill packs (markdown instructions)
 client/               React VRM avatar + voice + chat UI (optional)
 test/                 unit + integration tests
 ```

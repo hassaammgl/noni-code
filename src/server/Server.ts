@@ -206,6 +206,8 @@ export function startServer({
                     cwd: runtime.cwd,
                     sessionId: runtime.sessionId,
                     tools: runtime.agent.listTools().length,
+                    skills: runtime.skills.list().length,
+                    planMode: runtime.planMode.on,
                 });
                 return;
             }
@@ -260,6 +262,7 @@ export function startServer({
                 json(res, 200, {
                     model: runtime.agent.model,
                     think: runtime.agent.think,
+                    planMode: runtime.planMode.on,
                     tools: runtime.agent.listTools().map((t) => ({
                         name: t.name,
                         dangerous: t.dangerous,
@@ -298,6 +301,17 @@ export function startServer({
                 const body = await readBody(req);
                 runtime.agent.think = !!body.on;
                 json(res, 200, { think: runtime.agent.think });
+                return;
+            }
+
+            if (req.method === "POST" && url.pathname === "/api/plan") {
+                if (runtime.runLock.busy) {
+                    json(res, 409, { error: "agent busy" });
+                    return;
+                }
+                const body = await readBody(req);
+                runtime.planMode.set(!!body.on);
+                json(res, 200, { planMode: runtime.planMode.on });
                 return;
             }
 

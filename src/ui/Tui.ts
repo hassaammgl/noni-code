@@ -92,8 +92,8 @@ export class Tui implements AgentUI {
         console.log();
         const plan = todos ? ` ${dim("·")} ${cyan(`${todos} todos`)}` : "";
         console.log(`  ${bold("✻ Noni")} ${dim("·")} ${cyan(model)} ${dim("·")} ${tools} tools${plan}`);
-        console.log(`  ${dim("/help  /tools  /todos  /jobs  /client")}`);
-        console.log(`  ${dim("/model <name>  /clear  /think  /update  /exit")}`);
+        console.log(`  ${dim("/help  /tools  /todos  /jobs  /client  /plan")}`);
+        console.log(`  ${dim("/model <name>  /clear  /skills  /think  /update  /exit")}`);
         console.log(`  ${this.rule()}`);
         this.ruleShown = true;
     }
@@ -297,6 +297,15 @@ export class Tui implements AgentUI {
         }
         if (preview) console.log(dim(`  ${preview.replace(/\n/g, "\n  ")}`));
         const a = await this.rl.question(`  ${yellow("Allow?")} ${dim("[y/N]")} `);
+        return a.trim().toLowerCase().startsWith("y");
+    }
+
+    /** Plan mode: exit_plan ka plan dikha kar approval lo. */
+    async approvePlan(plan: string): Promise<boolean> {
+        this.ruleShown = false;
+        console.log(cyan("  Proposed plan:"));
+        console.log(plan.split("\n").map((line) => dim(`    ${line}`)).join("\n"));
+        const a = await this.rl.question(`  ${yellow("Approve and execute?")} ${dim("[y/N]")} `);
         return a.trim().toLowerCase().startsWith("y");
     }
 }

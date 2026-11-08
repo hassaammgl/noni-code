@@ -128,6 +128,11 @@ export class WebAgentUI implements RuntimeUI {
         return this.request({ kind: "confirm", strict: true }, false);
     }
 
+    /** exit_plan: browser me plan dikha kar approve/reject lo. */
+    approvePlan(plan: string): Promise<boolean> {
+        return this.request({ kind: "plan", plan }, false);
+    }
+
     ask(question: string, options: string[] = []): Promise<string> {
         const answer = this.request({ kind: "ask", question, options }, "");
         return answer as Promise<string>;

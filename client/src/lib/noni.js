@@ -55,6 +55,10 @@ export function noniSetThink(on) {
   return post('/api/think', { on })
 }
 
+export function noniSetPlan(on) {
+  return post('/api/plan', { on })
+}
+
 export function noniClear() {
   return post('/api/clear', {})
 }
@@ -97,8 +101,8 @@ function parseFrame(frame) {
 }
 
 /**
- * Ek chat turn chalao. `decide(event, data)` se confirm/ask ka jawab do:
- * confirm -> boolean, ask -> string.
+ * Ek chat turn chalao. `decide(event, data)` se confirm/ask/plan ka jawab do:
+ * confirm/plan -> boolean, ask -> string.
  */
 export async function streamFromNoni(
   message,
@@ -145,6 +149,9 @@ export async function streamFromNoni(
         failure = data.message || 'agent error'
       } else if (event === 'confirm') {
         const allow = decide ? await decide('confirm', data) : false
+        await noniConfirm(data.id, allow).catch(() => {})
+      } else if (event === 'plan') {
+        const allow = decide ? await decide('plan', data) : false
         await noniConfirm(data.id, allow).catch(() => {})
       } else if (event === 'ask') {
         const answer = decide ? await decide('ask', data) : ''

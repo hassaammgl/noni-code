@@ -20,6 +20,8 @@ Legend: ✅ in code · ⚠️ listed as done but missing from code · ⬜ not st
 | `read_docs` (installed package → pydoc/go doc/man/headers → npm/PyPI → web) | no | ✅ |
 | `DocsGuard` (blocks new third-party imports until `read_docs`, 2 blocks max) | — | ✅ |
 | `todo` (nested plan, `next`/`done` iteration, `/todos` view) | no | ✅ |
+| `skill` (`.ai/skills` se instructions on demand; `/skills` view) | no | ✅ |
+| `exit_plan` (plan mode: plan approve karke read-only se bahar) | no | ✅ |
 | `jobs` (background bash jobs, `/jobs`, `wait`/`status`/`kill`) | kill yes | ✅ |
 | MCP tools (from `~/.config/noni-chan/config.json`) | yes | ✅ code |
 

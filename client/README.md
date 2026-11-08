@@ -9,7 +9,8 @@ A local VRM avatar + voice + chat client for Noni: chat through the **Noni agent
 1. Repo root me TUI chalao aur `/client on` karo — server usi process me start hota hai (default 4317). Ya alag process: `bun run serve` / `noni-chan serve --port 4317`.
 2. `cd client && bun run build` (ya hot-reload ke liye `bun run dev`), phir `http://127.0.0.1:4317/` kholo.
 3. Upar ke pill me **Noni agent** dikhega. Dangerous tool chalne se pehle browser me Allow/Deny modal aata hai; `ask_user` ka jawab bhi wahin dete ho.
-4. Band karna ho to TUI me `/client off`.
+4. **Plan** button read-only plan mode toggle karta hai. Agent plan de to **Approve & execute** modal aata hai; approve karne par hi edits chalte hain.
+5. Band karna ho to TUI me `/client off`.
 
 ## History
 

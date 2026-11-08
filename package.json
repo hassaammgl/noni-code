@@ -12,8 +12,10 @@
     "index.ts",
     "serve.ts",
     "src",
+    ".ai",
     "README.md",
-    "TOOLS.md"
+    "TOOLS.md",
+    "TODO.md"
   ],
   "scripts": {
     "dev": "bun run --watch index.ts",

@@ -125,6 +125,9 @@ ui.onExit(async () => {
 });
 
 ui.banner(agent.model, agent.listTools().length, todos.size);
+if (runtime.planMode.on) {
+  ui.log("plan mode ON (read-only) — agent plan dega, approve karne par tools khulenge. Band karne ke liye: /plan off");
+}
 
 /** Ek hi latest version ka warning dobara na dikhe */
 let notifiedVersion = "";
@@ -170,6 +173,14 @@ while (true) {
   else if (input === "/think") {
     agent.think = !agent.think;
     ui.log(`thinking: ${agent.think ? "ON" : "OFF"}`);
+  } else if (input === "/plan" || input === "/plan on" || input === "/plan off") {
+    const want = input === "/plan" ? !runtime.planMode.on : input === "/plan on";
+    runtime.planMode.set(want);
+    ui.log(
+      want
+        ? "plan mode ON — read-only investigation; agent exit_plan se approval maangega, phir tools khulenge"
+        : "plan mode OFF — write/run tools enabled",
+    );
   } else if (input === "/client" || input.startsWith("/client ")) {
     const parts = input.split(/\s+/);
     const arg = parts[1] ?? "";
@@ -215,6 +226,26 @@ while (true) {
         }
       }
     }
+  } else if (input === "/skills" || input.startsWith("/skills ")) {
+    const arg = input.slice(7).trim();
+    if (!arg) {
+      const skills = runtime.skills.list();
+      ui.log(
+        skills.length
+          ? `${skills.length} skills (.ai)\n${runtime.skills.renderList()}\n\n/skills <name> dekhne ke liye, /skills reload disk se dobara`
+          : `koi skill nahi mili\n${runtime.skills.locations().join("\n")}`,
+      );
+    } else if (arg === "reload") {
+      const skills = await runtime.skills.load();
+      ui.log(`${skills.length} skills reload ho gayi`);
+    } else {
+      const skill = runtime.skills.get(arg);
+      if (!skill) ui.warn(`skill "${arg}" nahi mili — /skills se list dekho`);
+      else {
+        const body = skill.body.length > 1600 ? `${skill.body.slice(0, 1600)}\n…` : skill.body;
+        ui.log(`# ${skill.name} (${skill.source}: ${skill.path})\n\n${body}`);
+      }
+    }
   } else if (input === "/update") {
     ui.log("checking npm for updates...");
     const result = await checkForUpdate();
@@ -236,6 +267,8 @@ while (true) {
         "/model <name>    model switch",
         "/clear           chat history clear (naya session)",
         "/history [id]    saved sessions dekho / load karo",
+        "/skills          .ai skills list / content / reload",
+        "/plan [on|off]   read-only plan mode (exit_plan se approval)",
         "/think           thinking on/off",
         "/client on|off   web UI server on/off (same process)",
         "/update          npm pe naya version check karo",

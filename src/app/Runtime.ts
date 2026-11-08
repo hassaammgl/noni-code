@@ -4,6 +4,9 @@ import type { NoniConfig } from "../config/Config";
 import { loadConfig } from "../config/Config";
 import { DocsGuard, DocsRegistry } from "../docs/DocsGuard";
 import { HistoryStore, type HistoryMessage } from "../history/HistoryStore";
+import { PlanGuard } from "../plan/PlanGuard";
+import { PlanMode } from "../plan/PlanMode";
+import { SkillStore } from "../skills/SkillStore";
 import { NodeModulesSource, SystemSource } from "../docs/LocalSources";
 import { RegistrySource, WebDocsSource } from "../docs/RemoteSources";
 import { JobManager } from "../jobs/JobManager";
@@ -28,6 +31,8 @@ import {
 import { GitTool } from "../tools/GitTool";
 import { GlobTool, GrepTool } from "../tools/SearchTools";
 import { SystemInfoTool } from "../tools/SystemTool";
+import { SkillTool } from "../tools/SkillTool";
+import { ExitPlanTool } from "../tools/PlanTool";
 import { TodoTool } from "../tools/TodoTool";
 import { WebFetchTool, WebSearchTool } from "../tools/WebTools";
 
@@ -49,6 +54,10 @@ export interface Runtime {
     agent: Agent;
     todos: TodoStore;
     docs: DocsRegistry;
+    /** `.ai` skill packs (index prompt me, body on demand). */
+    skills: SkillStore;
+    /** Plan mode: read-only investigation, exit_plan se approval. */
+    planMode: PlanMode;
     search: SearchEngine;
     mcp: McpManager;
     config: NoniConfig;
@@ -85,6 +94,12 @@ export class RunLock {
     }
 }
 
+/** Plan-first default: ON, jab tak `NONI_PLAN_MODE=off` na ho. */
+function planModeDefault(): boolean {
+    const raw = String(process.env.NONI_PLAN_MODE ?? "").trim().toLowerCase();
+    return !["off", "0", "false", "no"].includes(raw);
+}
+
 /**
  * TUI aur web server dono ke liye ek hi agent/tool stack banao.
  * UI inject hoti hai, isliye same tools terminal aur browser dono me chalte hain.
@@ -110,6 +125,16 @@ export async function createRuntime({ cwd, model, ui }: RuntimeOptions): Promise
     const docs = new DocsRegistry();
     const todos = new TodoStore();
 
+    // `.ai` skills: system prompt me sirf index, poora text `skill` tool se
+    const skills = new SkillStore(cwd);
+    await skills.load();
+    agent.useSkills(skills);
+
+    // Plan mode: jab ON ho to sirf read-only tools, exit_plan se approval.
+    // DocsGuard se pehle, taake plan mode ka message hi dikhe.
+    const planMode = new PlanMode(planModeDefault());
+    agent.setPlanMode(() => planMode.on);
+    agent.addGuard(new PlanGuard(planMode));
     // third-party import wale edit pe docs padhna zaroori
     agent.addGuard(new DocsGuard(docs, cwd));
     // Plan har run ke system prompt me, taake model apne tasks na bhoole
@@ -132,6 +157,18 @@ export async function createRuntime({ cwd, model, ui }: RuntimeOptions): Promise
         new GrepTool(cwd),
         new SystemInfoTool(),
         new TodoTool(todos),
+        new SkillTool(skills),
+        new ExitPlanTool(planMode, todos, async (plan) => {
+            const approved = await agent.approvePlan(plan);
+            if (approved) {
+                // Approve ke baad agent khud todo-by-todo chale, beech me na ruke
+                agent.startPlanExecution(() => {
+                    const stats = todos.stats();
+                    return stats.done < stats.total;
+                });
+            }
+            return approved;
+        }),
         new WebSearchTool(search),
         new WebFetchTool(),
         new ReadDocsTool(docs, [
@@ -150,6 +187,8 @@ export async function createRuntime({ cwd, model, ui }: RuntimeOptions): Promise
         agent,
         todos,
         docs,
+        skills,
+        planMode,
         search,
         mcp,
         config,
