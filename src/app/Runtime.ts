@@ -36,7 +36,7 @@ import { ExitPlanTool } from "../tools/PlanTool";
 import { TodoTool } from "../tools/TodoTool";
 import { WebFetchTool, WebSearchTool } from "../tools/WebTools";
 
-/** UI jo runtime ko chahiye: Agent ke callbacks + ask_user ke liye ek sawaal. */
+/** UI required by the runtime: Agent callbacks plus a question prompt for ask_user. */
 export type RuntimeUI = AgentUI & {
     ask(question: string, options?: string[]): Promise<string>;
 };
@@ -66,7 +66,7 @@ export interface Runtime {
     ui: RuntimeUI;
     /** SQLite chat history (sessions + messages). */
     history: HistoryStore;
-    /** Abhi kaunsi history session me likh rahe hain. */
+    /** Current history session being written to. */
     sessionId: number;
     newSession(): number;
     loadSession(id: number): HistoryMessage[];
@@ -75,7 +75,7 @@ export interface Runtime {
     shutdown(): Promise<void>;
 }
 
-/** Simple mutex: TUI aur web client ek saath agent na chalayen. */
+/** Simple mutex: prevents the TUI and web client from running the agent concurrently. */
 export class RunLock {
     private locked = false;
 
@@ -101,8 +101,8 @@ function planModeDefault(): boolean {
 }
 
 /**
- * TUI aur web server dono ke liye ek hi agent/tool stack banao.
- * UI inject hoti hai, isliye same tools terminal aur browser dono me chalte hain.
+ * Build a shared agent/tool stack for both the TUI and web server.
+ * UI is injected, so the same tools work in the terminal and browser.
  */
 export async function createRuntime({ cwd, model, ui }: RuntimeOptions): Promise<Runtime> {
     const jobs = new JobManager();
@@ -119,25 +119,25 @@ export async function createRuntime({ cwd, model, ui }: RuntimeOptions): Promise
     agent.onMessage((msg) => history.append(sessionId, msg));
 
     const search = new SearchEngine([
-        new SearxngProvider(process.env.SEARXNG_URL ?? "http://localhost:8080"), // pehle apna
+        new SearxngProvider(process.env.SEARXNG_URL ?? "http://localhost:8080"), // prefer local instance
         new DuckDuckGoProvider(), // fallback
     ]);
     const docs = new DocsRegistry();
     const todos = new TodoStore();
 
-    // `.ai` skills: system prompt me sirf index, poora text `skill` tool se
+    // `.ai` skills: only the index goes into the system prompt; full text loads via the `skill` tool
     const skills = new SkillStore(cwd);
     await skills.load();
     agent.useSkills(skills);
 
-    // Plan mode: jab ON ho to sirf read-only tools, exit_plan se approval.
-    // DocsGuard se pehle, taake plan mode ka message hi dikhe.
+    // Plan mode: when ON, only read-only tools are allowed; approval comes via exit_plan.
+    // Runs before DocsGuard so the plan-mode message is shown.
     const planMode = new PlanMode(planModeDefault());
     agent.setPlanMode(() => planMode.on);
     agent.addGuard(new PlanGuard(planMode));
-    // third-party import wale edit pe docs padhna zaroori
+    // require docs to be read before edits that add third-party imports
     agent.addGuard(new DocsGuard(docs, cwd));
-    // Plan har run ke system prompt me, taake model apne tasks na bhoole
+    // Include the plan in every run system prompt so the model does not lose track of tasks
     agent.addContext(() => (todos.size ? todos.render(6_000) : ""));
 
     const mcpTools = await mcp.load(config.mcp.servers);
@@ -161,7 +161,7 @@ export async function createRuntime({ cwd, model, ui }: RuntimeOptions): Promise
         new ExitPlanTool(planMode, todos, async (plan) => {
             const approved = await agent.approvePlan(plan);
             if (approved) {
-                // Approve ke baad agent khud todo-by-todo chale, beech me na ruke
+                // After approval, let the agent execute todos step by step without pausing
                 agent.startPlanExecution(() => {
                     const stats = todos.stats();
                     return stats.done < stats.total;
@@ -203,7 +203,7 @@ export async function createRuntime({ cwd, model, ui }: RuntimeOptions): Promise
             return sessionId;
         },
         loadSession(id) {
-            if (!history.get(id)) throw new Error(`history session #${id} nahi mila`);
+            if (!history.get(id)) throw new Error(`history session #${id} not found`);
             const messages = history.messages(id);
             sessionId = id;
             agent.loadHistory(messages);

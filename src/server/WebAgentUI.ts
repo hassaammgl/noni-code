@@ -12,8 +12,8 @@ interface Pending {
 const WAIT_MS = 5 * 60 * 1000;
 
 /**
- * Agent ke callbacks ko SSE events me badalta hai. Ek waqt me ek hi client
- * attach hota hai; confirm/ask ke jawab HTTP POST se aate hain.
+ * Converts Agent callbacks into SSE events. Only one client can be attached at a time;
+ * confirm/ask responses arrive via HTTP POST.
  */
 export class WebAgentUI implements RuntimeUI {
     private sink: SseSend | null = null;
@@ -33,7 +33,7 @@ export class WebAgentUI implements RuntimeUI {
         this.cancelPending();
     }
 
-    /** Chat khatam hone ke baad aakhri assistant turn ka text. */
+    /** Final assistant text after the chat turn completes. */
     get lastContent() {
         return this.last;
     }
@@ -128,7 +128,7 @@ export class WebAgentUI implements RuntimeUI {
         return this.request({ kind: "confirm", strict: true }, false);
     }
 
-    /** exit_plan: browser me plan dikha kar approve/reject lo. */
+    /** exit_plan: show the plan in the browser and collect approve/reject. */
     approvePlan(plan: string): Promise<boolean> {
         return this.request({ kind: "plan", plan }, false);
     }

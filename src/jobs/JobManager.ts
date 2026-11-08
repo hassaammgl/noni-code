@@ -47,8 +47,8 @@ function seconds(ms: number): number {
 }
 
 /**
- * Background shell jobs. BashTool command ko yahan start karta hai; timeout pe kill nahi hota,
- * job chalta rehta hai aur agent `wait`/`status` se track karta hai.
+ * Background shell jobs. BashTool starts commands here; on timeout the process is not killed,
+ * the job keeps running and the agent tracks it with `wait`/`status`.
  */
 export class JobManager {
     private jobs = new Map<string, Job>();
@@ -99,8 +99,8 @@ export class JobManager {
                     done();
                 };
                 proc.once("close", (exitCode) => finish(exitCode));
-                proc.once("error", () => finish()); // spawn fail (bash hi nahi mila)
-                // process pehle hi khatam ho gaya to event ka intezaar mat karo
+                proc.once("error", () => finish()); // spawn failed (bash not found)
+                // if the process already exited, do not wait for the event
                 if (proc.exitCode !== null) finish(proc.exitCode);
                 else if (proc.signalCode) finish();
             });
@@ -170,7 +170,7 @@ export class JobManager {
         return job;
     }
 
-    /** Job output tail; errors build ke end me hote hain, isliye tail zyada useful hai. */
+    /** Job output tail; build errors often appear near the end, so the tail is most useful. */
     output(job: Job, max = 20_000): string {
         const text = [job.stdout.trimEnd(), job.stderr.trimEnd() ? `[stderr]\n${job.stderr.trimEnd()}` : ""]
             .filter(Boolean)
@@ -194,7 +194,7 @@ export class JobManager {
         return this.list().map((job) => this.describe(job)).join("\n");
     }
 
-    /** App exit pe running jobs kill karo, taake orphan builds na rahein. */
+    /** Kill running jobs on app exit to avoid orphaned builds. */
     async closeAll() {
         const running = this.list().filter((job) => job.status === "running");
         for (const job of running) this.kill(job.id);

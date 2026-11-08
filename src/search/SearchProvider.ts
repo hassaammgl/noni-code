@@ -5,9 +5,9 @@ export interface SearchResult {
 }
 
 /**
- * Har search backend (SearXNG, DuckDuckGo, kal ko Brave...) is class ko extend karta hai.
- * Provider sirf apna kaam karta hai: query bhejo, results lo. Fallback/cache SearchEngine sambhalta hai.
- * Fail hone par Error throw karo (message chhota aur saaf rakho, user ko dikhega).
+ * Every search backend (SearXNG, DuckDuckGo, Brave, etc.) extends this class.
+ * A provider only does its own work: send a query and return results. Fallback/cache is handled by SearchEngine.
+ * Throw an Error on failure (keep the message short and clear; it is shown to the user).
  */
 export abstract class SearchProvider {
     abstract readonly name: string;

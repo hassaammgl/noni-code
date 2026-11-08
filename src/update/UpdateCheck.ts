@@ -31,7 +31,7 @@ function core(version: string): [number, number, number] | null {
   return [Number(m[1]), Number(m[2] ?? 0), Number(m[3] ?? 0)];
 }
 
-/** latest current se naya hai? Prerelease ko same core ka purana maana jata hai. */
+/** Is latest newer than current? A prerelease is treated as older than the same core version. */
 export function isNewer(latest: string, current: string): boolean {
   const a = core(latest);
   const b = core(current);
@@ -47,8 +47,8 @@ export function isNewer(latest: string, current: string): boolean {
 }
 
 /**
- * npm registry se latest version poocho. Kabhi throw nahi karta:
- * offline/registry fail pe "unavailable" milta hai. Koi file/cache nahi likhta.
+ * Check npm registry for the latest version. Never throws:
+ * returns "unavailable" on offline/registry failures. Does not write files/cache.
  */
 export async function checkForUpdate(
   opts: { timeoutMs?: number; current?: string; name?: string } = {},

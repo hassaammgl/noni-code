@@ -4,34 +4,34 @@ Roadmap for Noni. Ordered by impact, not by effort.
 
 ## Next
 
-- [ ] **Checkpoints / undo** — every edit ke pehle file snapshot; `/undo` se code + conversation rollback. Bina iske agent ke badle hue files wapas karne ka seedha raasta nahi hai.
-- [ ] **Subagents** — ek tool jo alag context me kaam karke summary wapas de. Parallel tasks, context pollution kam, lambi investigations sasti.
-- [ ] **Project memory** — `<project>/NONI.md` auto-load (hierarchy: project → `~/.config/noni-chan/NONI.md`), taake har session me same instructions dobara na likhni pade.
-- [ ] **Permission rules** — `.noni/settings.json` me allow/ask/deny rules per tool/command; abhi sirf har call pe confirm + plan guard hai.
-- [ ] **Auto-compaction** — context bharne se pehle purane turns summarize karo; manual `/clear` ki zaroorat kam ho.
-- [ ] **Headless mode** — `noni -p "prompt"` + JSON/stream output, CI aur scripts ke liye (`serve.ts` abhi HTTP-only hai).
+- [ ] **Checkpoints / undo** — snapshot files before each edit; `/undo` rolls back code + conversation. Without this, there is no direct way to revert agent-made file changes.
+- [ ] **Subagents** — a tool that works in a separate context and returns a summary. Enables parallel tasks, less context pollution, and cheaper long investigations.
+- [ ] **Project memory** — auto-load `<project>/NONI.md` (hierarchy: project → `~/.config/noni-chan/NONI.md`) so the same instructions don't need to be repeated every session.
+- [ ] **Permission rules** — allow/ask/deny rules per tool/command in `.noni/settings.json`; currently only per-call confirm + plan guard exist.
+- [ ] **Auto-compaction** — summarize older turns before context fills; reduce the need for manual `/clear`.
+- [ ] **Headless mode** — `noni -p "prompt"` + JSON/stream output for CI and scripts (`serve.ts` is currently HTTP-only).
 
 ## Gaps vs Claude Code
 
-- [ ] **Subagents / background tasks / worktrees** — abhi single loop, ek waqt me ek chat (dusra request 409).
+- [ ] **Subagents / background tasks / worktrees** — currently a single loop, one chat at a time (concurrent requests return 409).
 - [ ] **Checkpoints / rewind** — `/rewind` jaisa code + chat rollback.
-- [ ] **Sandbox** — OS-level filesystem/network isolation; abhi sirf confirm prompts.
-- [ ] **Hooks / plugins** — lifecycle hooks (before/after tool, stop) aur plugin marketplace nahi.
-- [ ] **Project memory** — `CLAUDE.md` jaisa auto-loaded instruction file nahi.
-- [ ] **Code intelligence** — LSP diagnostics / go-to-definition nahi; grep + read par depend.
-- [ ] **GitHub / PR workflow** — `git add/commit` bas; PR create, CI fix, review commands nahi.
-- [ ] **Review commands** — `/code-review`, `/security-review`, `/simplify` jaisa built-in flow nahi (skills se manually ho sakta hai).
-- [ ] **Editor integration** — VS Code / JetBrains extension nahi; web client optional hai.
-- [ ] **Token / usage stats** — local hai isliye cost nahi, par context/token usage ka koi counter nahi.
-- [ ] **Fallback models** — ek model fail ho to doosra try karne ki chain nahi.
+- [ ] **Sandbox** — OS-level filesystem/network isolation; currently only confirm prompts.
+- [ ] **Hooks / plugins** — no lifecycle hooks (before/after tool, stop) or plugin marketplace.
+- [ ] **Project memory** — no auto-loaded instruction file equivalent to `CLAUDE.md`.
+- [ ] **Code intelligence** — no LSP diagnostics / go-to-definition; depends on grep + read.
+- [ ] **GitHub / PR workflow** — only `git add/commit`; no PR create, CI fix, or review commands.
+- [ ] **Review commands** — no built-in `/code-review`, `/security-review`, `/simplify` flow (possible manually via skills).
+- [ ] **Editor integration** — no VS Code / JetBrains extension; web client is optional.
+- [ ] **Token / usage stats** — local so no cost, but no context/token usage counter.
+- [ ] **Fallback models** — no fallback chain when a model fails.
 
 ## Smaller
 
-- [ ] Web client: multiple tabs (abhi dusra request `409 agent busy`).
+- [ ] Web client: multiple tabs (concurrent requests currently return `409 agent busy`).
 - [ ] Streaming TTS in the web client.
-- [ ] Session fork / branch / rename (abhi sirf `/history <id>` load).
-- [ ] Image support audit — vision path hai, par long image chats context kha jati hain; compaction ke saath fix hoga.
-- [ ] Automated test suite — abhi verification `bun run typecheck` + manual runs.
+- [ ] Session fork / branch / rename (currently only `/history <id>` load).
+- [ ] Image support audit — vision path exists, but long image chats consume context; will improve with compaction.
+- [ ] Automated test suite — currently verified with `bun run typecheck` + manual runs.
 
 ## Done
 

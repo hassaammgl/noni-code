@@ -4,8 +4,8 @@ import { Tool } from "./Tool";
 const ACTIONS = ["list", "read"] as const;
 
 /**
- * Skill loader: `.ai` me rakhi instructions on demand padhta hai.
- * System prompt me sirf index hota hai, isliye persona/context chhota rehta hai.
+ * Skill loader: reads instructions stored in `.ai` on demand.
+ * The system prompt contains only the index, keeping persona/context small.
  */
 export class SkillTool extends Tool {
     name = "skill";

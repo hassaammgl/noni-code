@@ -16,9 +16,9 @@ export interface SearchEngineOptions {
 const MAX_CACHE = 100;
 
 /**
- * Providers ko order me try karta hai: pehla jo results de wahi jeet-ta hai.
+ * Tries providers in order: the first provider that returns results wins.
  * Extra: cache, duplicate URL hatana, aur fail hone wale provider ko thodi der skip karna
- * (SearXNG band ho to har query pe timeout nahi bharna padta).
+ * (avoids paying a timeout on every query when SearXNG is down).
  */
 export class SearchEngine {
     private cache = new Map<string, { at: number; value: SearchResponse }>();
@@ -45,7 +45,7 @@ export class SearchEngine {
 
         const now = Date.now();
         let candidates = this.providers.filter((p) => (this.retryAt.get(p.name) ?? 0) <= now);
-        if (!candidates.length) candidates = this.providers; // sab cooldown me hain to bhi try karo
+        if (!candidates.length) candidates = this.providers; // try anyway if all providers are in cooldown
 
         const errors: string[] = [];
         let answeredEmpty: string | undefined;
@@ -56,7 +56,7 @@ export class SearchEngine {
                 const results = dedupe(raw).slice(0, this.limit);
                 if (!results.length) {
                     answeredEmpty ??= p.name;
-                    continue; // is provider ke paas kuch nahi, agla try karo
+                    continue; // this provider returned nothing; try the next one
                 }
                 const value: SearchResponse = { results, provider: p.name, cached: false };
                 this.remember(key, value);
@@ -67,7 +67,7 @@ export class SearchEngine {
             }
         }
 
-        // kisi ne jawab diya (khali), to ye "no results" hai, error nahi
+        // a provider responded (empty), so this is "no results", not an error
         if (answeredEmpty) return { results: [], provider: answeredEmpty, cached: false };
         throw new Error(`saare search providers fail hue (${errors.join("; ")})`);
     }

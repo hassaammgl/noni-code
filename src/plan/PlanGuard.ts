@@ -2,7 +2,7 @@ import type { Guard } from "../agent/Agent";
 import type { Tool } from "../tools/Tool";
 import type { PlanMode } from "./PlanMode";
 
-/** Plan mode me sirf ye tools chalte hain; baaki sab blocked. */
+/** In plan mode, only these tools are allowed; everything else is blocked. */
 const READ_ONLY = new Set([
     "read_file",
     "list_dir",
@@ -18,10 +18,10 @@ const READ_ONLY = new Set([
     "exit_plan",
 ]);
 
-/** bash me sirf job tracking allowed hai — naya command nahi. */
+/** In bash, only job-tracking actions are allowed — no new commands. */
 const BASH_SAFE = new Set(["status", "wait", "jobs"]);
 
-/** git me sirf read-only actions. */
+/** For git, only read-only actions are allowed. */
 const GIT_SAFE = new Set(["status", "diff", "log", "show", "branch"]);
 
 function blocked(label: string): string {
@@ -34,8 +34,8 @@ function blocked(label: string): string {
 }
 
 /**
- * Plan mode ka guard: jab mode ON ho to koi bhi likhne/chalane wala tool block hota hai.
- * Blocked message model ko read-only plan banane aur exit_plan call karne ki taraf bhejta hai.
+ * Plan-mode guard: when ON, any write/execute tool is blocked.
+ * The blocked message directs the model to create a read-only plan and call exit_plan.
  */
 export class PlanGuard implements Guard {
     constructor(private mode: PlanMode) {}

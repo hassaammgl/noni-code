@@ -17,23 +17,23 @@ export interface AgentUI {
     warn?(msg: string): void;
     confirm(name: string, args: Record<string, any>, preview?: string, warnings?: string[]): Promise<boolean>;
     confirmStrict(): Promise<boolean>;
-    /** Plan mode exit ke liye approval; na ho to confirm() fallback. */
+    /** Approval for exiting plan mode; falls back to confirm() if unavailable. */
     approvePlan?(plan: string): Promise<boolean>;
 }
 
-/** Env se positive integer, warna fallback. 0/NaN/"abc" ignore ho jate hain. */
+/** Read a positive integer from env, otherwise use fallback. 0/NaN/"abc" are ignored. */
 function envInt(name: string, fallback: number): number {
     const n = Number(process.env[name]);
     return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
-/** Ollama/Bun ke timeout errors detect karo, taake sirf unhi pe context chhota karke retry ho. */
+/** Detect Ollama/Bun timeout errors so retries only shrink context for those cases. */
 function isTimeoutError(e: unknown): boolean {
     const msg = e instanceof Error ? `${e.name} ${e.message}` : String(e);
     return /timeout|timed out|abort|aborted/i.test(msg);
 }
 
-/** Transient network/server errors: inhe wahi request dobara bhej kar retry kar sakte hain. */
+/** Transient network/server errors: safe to retry the same request. */
 function isTransientError(e: unknown): boolean {
     const msg = e instanceof Error ? `${e.name} ${e.message}` : String(e);
     return /ECONNREFUSED|ECONNRESET|EPIPE|ETIMEDOUT|EAI_AGAIN|fetch failed|socket hang up|network|overloaded|\b(429|500|502|503|504)\b/i.test(
@@ -45,13 +45,13 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 
 /** Optional fallback if the model has no metadata. */
 const FALLBACK_NUM_CTX = 32_768;
-/** Isse neeche context chhota karna bekaar hai. */
+/** Shrinking context below this is not useful. */
 const MIN_NUM_CTX = 4_096;
 /** Approved plan khud chalte waqt model kitni baar ruk kar nudge accept kare. */
 const MAX_AUTO_CONTINUE = 10;
-/** Network/5xx errors pe kitni baar dobara try karein. */
+/** Number of retries for network/5xx errors. */
 const MAX_TRANSIENT_RETRIES = 3;
-/** Approved plan ke andar ye file mutations dobara confirm nahi maangte. */
+/** These file mutations do not require reconfirmation inside an approved plan. */
 const PLAN_WRITES = new Set([
     "write_file",
     "edit_file",
@@ -66,13 +66,13 @@ const TEMPERATURE = (() => {
     return Number.isFinite(n) && n >= 0 ? n : 0.4;
 })();
 
-/** Tool chalne se pehle check. String return karo to tool block hota hai aur wo string model ko error ban kar jati hai. */
+/** Pre-tool check. Returning a string blocks the tool and sends that string to the model as an error. */
 export interface Guard {
     check(tool: Tool, args: Record<string, any>): Promise<string | undefined>;
     reset?(): void;
 }
 
-/** Agent jo messages conversation me add karta hai (history store ke liye). */
+/** Messages added to the conversation by the agent (for history storage). */
 export interface AgentMessageEvent {
     role: "user" | "assistant";
     content: string;
@@ -91,7 +91,7 @@ export class Agent {
     private messageSink?: (msg: AgentMessageEvent) => void;
     private skills?: SkillStore;
     private planModeGetter?: () => boolean;
-    /** Plan approve hone ke baad: todos bache hain to model ko khud aage badhne do. */
+    /** After plan approval: if todos remain, let the model continue on its own. */
     private continueCheck?: () => boolean;
     private autoContinues = 0;
     public think = false;
@@ -114,7 +114,7 @@ export class Agent {
         this.guards.push(guard);
     }
 
-    /** Ek run ke liye UI badlo (TUI ↔ web client); runs serialized rehte hain. */
+    /** Swap UI for a run (TUI ↔ web client); runs remain serialized. */
     setUI(ui: AgentUI) {
         this.ui = ui;
     }
@@ -124,37 +124,37 @@ export class Agent {
         this.messageSink = sink;
     }
 
-    /** `.ai` skills ka sirf index system prompt me jata hai; poora text `skill` tool se load hota hai. */
+    /** Only the `.ai` skills index goes into the system prompt; full text loads via the `skill` tool. */
     useSkills(store: SkillStore) {
         this.skills = store;
     }
 
-    /** Plan mode live state (TUI aur web ek hi switch use karte hain). */
+    /** Live plan-mode state (shared by the TUI and web). */
     setPlanMode(getter: () => boolean) {
         this.planModeGetter = getter;
     }
 
-    /** exit_plan ke liye approval — UI jahan hai wahin se poocha jata hai. */
+    /** Approval for exit_plan — requested through the active UI. */
     async approvePlan(plan: string): Promise<boolean> {
         if (this.ui.approvePlan) return this.ui.approvePlan(plan);
         return this.ui.confirm("exit_plan", { plan }, plan);
     }
 
     /**
-     * Approved plan ko khud execute karo: agar model beech me ruk jaye aur
-     * todos abhi bache hon, ek nudge bhej kar loop continue karo.
+     * Execute an approved plan autonomously: if the model stops and todos remain,
+     * send a nudge and continue the loop.
      */
     startPlanExecution(check: () => boolean) {
         this.continueCheck = check;
         this.autoContinues = 0;
     }
 
-    /** Approved plan ke file edits pre-approved; bash/git jaise commands nahi. */
+    /** File edits are pre-approved inside an approved plan; commands like bash/git are not. */
     private planWriteApproved(tool: Tool): boolean {
         return !!this.continueCheck?.() && PLAN_WRITES.has(tool.name);
     }
 
-    /** Purani chat ko context me wapas load karo (tools/todos wali state fresh rahegi). */
+    /** Reload prior chat into context (tool/todo runtime state stays fresh). */
     loadHistory(items: { role: string; content: string; thinking?: string }[]) {
         const past: Message[] = items
             .filter((m) => (m.role === "user" || m.role === "assistant") && m.content.trim())
@@ -176,8 +176,8 @@ export class Agent {
     }
 
     /**
-     * Model ki context length. Pehle env, phir config (`llm.num_ctx`), warna model ki max.
-     * Default config `"max"` hai, isliye har model apni poori context se chalta hai.
+     * Model context length. Prefer env, then config (`llm.num_ctx`), then the model maximum.
+     * Default config is `"max"`, so each model uses its full context.
      */
     private async numCtx(): Promise<number> {
         const fromEnv = Number(process.env.OLLAMA_NUM_CTX);
@@ -213,7 +213,7 @@ export class Agent {
         this.guards.forEach((g) => g.reset?.()); // /clear pe docs-read list bhi saaf
     }
 
-    /** Persona + live system info, taake Noni ko pata ho kahan chal rahi hai */
+    /** Persona + live system info, so Noni knows where it is running */
     private systemPrompt() {
         const tools = this.listTools().map((t) => t.name).join(", ") || "none";
         const os = ({ linux: "Linux", darwin: "macOS", win32: "Windows" } as Record<string, string>)[process.platform] ?? process.platform;
@@ -249,7 +249,7 @@ ${planMode ? `\n## Plan mode (ACTIVE — read-only)\nYou may not edit files, cre
 - One short dry joke is fine. Two is a stand-up set, and this is a terminal.`;
     }
 
-    /** Model vision (image) input leta hai ya nahi — Ollama capabilities se, per model cache */
+    /** Whether the model accepts vision (image) input — from Ollama capabilities, cached per model */
     private visionByModel = new Map<string, boolean>();
     async supportsVision(): Promise<boolean> {
         const cached = this.visionByModel.get(this.model);
@@ -266,10 +266,10 @@ ${planMode ? `\n## Plan mode (ACTIVE — read-only)\nYou may not edit files, cre
     }
 
     async run(input: string, images: string[] = []) {
-        // Naya user turn = purana plan auto-run khatam
+        // New user turn = stop previous plan auto-run
         this.continueCheck = undefined;
         this.autoContinues = 0;
-        // Har run pe system prompt refresh, taake model/tools/date current rahe
+        // Refresh the system prompt on every run so model/tools/date stay current
         this.messages[0] = { role: "system", content: this.systemPrompt() };
         this.messages.push({ role: "user", content: input, ...(images.length ? { images } : {}) });
         this.messageSink?.({ role: "user", content: input });
@@ -279,7 +279,7 @@ ${planMode ? `\n## Plan mode (ACTIVE — read-only)\nYou may not edit files, cre
 
     /** LLM -> tools -> LLM ... jab tak tool call aati rahe */
     private async loop() {
-        // Agar model timeout ho, isi run ke baaki calls half context pe karo
+        // If the model times out, use half context for remaining calls in this run
         let ctxOverride: number | undefined;
         // Lagataar network/5xx failures; successful stream pe reset
         let transientRetries = 0;
@@ -353,7 +353,7 @@ ${planMode ? `\n## Plan mode (ACTIVE — read-only)\nYou may not edit files, cre
                     if (msg.tool_calls?.length) calls.push(...msg.tool_calls);
                 }
             } catch (e) {
-                // Sirf tab retry karo jab abhi tak kuch screen pe na aaya ho
+                // Retry only when nothing has been rendered yet
                 const clean = !started && !thinking && !calls.length;
                 if (clean && isTimeoutError(e) && numCtx > MIN_NUM_CTX) {
                     numCtx = Math.max(MIN_NUM_CTX, Math.floor(numCtx / 2));
@@ -381,7 +381,7 @@ ${planMode ? `\n## Plan mode (ACTIVE — read-only)\nYou may not edit files, cre
             if (doneReason === "length") {
                 this.ui.warn?.(
                     `reply cut short: model limit hit (num_ctx=${numCtx}, num_predict=${NUM_PREDICT}). ` +
-                        `Chat lambi hai to /clear karo; lamba jawab chahiye to OLLAMA_NUM_PREDICT badha do.`,
+                        `Use /clear if the chat is long; increase OLLAMA_NUM_PREDICT for longer replies.`,
                 );
             }
 
@@ -398,7 +398,7 @@ ${planMode ? `\n## Plan mode (ACTIVE — read-only)\nYou may not edit files, cre
             }
 
             if (!calls.length) {
-                // Approved plan ke todos bache hain? Model ko chup-chaap aage badhao.
+                // Approved plan still has todos? Continue the model silently.
                 if (this.continueCheck?.()) {
                     if (this.autoContinues < MAX_AUTO_CONTINUE) {
                         this.autoContinues++;
@@ -435,7 +435,7 @@ ${planMode ? `\n## Plan mode (ACTIVE — read-only)\nYou may not edit files, cre
         this.ui.toolCall(name, args);
 
         try {
-            // Guards dangerous-confirm se pehle: blocked edit pe user ko bekar confirm na dikhe
+            // Run guards before dangerous confirmation: blocked edits should not prompt the user
             for (const guard of this.guards) {
                 const blocked = await guard.check(tool, args);
                 if (blocked) return this.fail(blocked, name, started);

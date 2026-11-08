@@ -29,36 +29,36 @@ function requireJobId(args: Record<string, any>): string {
     return id;
 }
 
-/** Risky command patterns. Match hone par user ko problem batayi jati hai + double confirm. */
+/** Risky command patterns. Matches show the issue to the user and require double confirmation. */
 const RISKS: { re: RegExp; msg: string }[] = [
     {
         re: /(^|[\s;&|(`$/\\])sudo(\s|$)/,
-        msg: "sudo: ye command root (admin) power se chalegi. Ek galti poora system kharab kar sakti hai.",
+        msg: "sudo: this command runs with root (admin) privileges. A mistake can damage the system.",
     },
     {
         re: /(^|[\s;&|(`/\\])rm(\s|$)/,
-        msg: "rm: files permanently delete hoti hain. Trash me nahi jatin, wapas nahi aayengi.",
+        msg: "rm: files are permanently deleted. They do not go to Trash and cannot be recovered.",
     },
     {
         re: /(^|[\s;&|(`/\\])rm\s+(-\S*\s+)*-\S*[rRf]/,
-        msg: "rm -r/-f: poora folder bina puche udd sakta hai (-f koi warning bhi nahi deta).",
+        msg: "rm -r/-f: can delete an entire folder without prompting (-f suppresses warnings).",
     },
-    { re: /\bfind\b[^\n]*(-delete|-exec\s+rm)/, msg: "find -delete/-exec rm: ek saath bohot saari files delete ho sakti hain." },
-    { re: /(^|[\s;&|(`/\\])(shred|unlink|rmdir)(\s|$)/, msg: "shred/unlink/rmdir: files ya folders delete karta hai." },
-    { re: /(^|[\s;&|(`/\\])(dd|mkfs(\.\w+)?|fdisk|parted)(\s|$)/, msg: "dd/mkfs/fdisk: disk ya partition ka data overwrite ya format kar sakta hai." },
-    { re: /\b(curl|wget)\b[^\n|]*\|\s*(sudo\s+)?(ba|z|da)?sh\b/, msg: "curl|sh: internet se script download karke seedha chala raha hai bina dekhe." },
-    { re: /\b(chmod|chown)\s+(-\S*\s+)*-\S*R/, msg: "chmod/chown -R: poore folder tree ki permissions badal dega." },
+    { re: /\bfind\b[^\n]*(-delete|-exec\s+rm)/, msg: "find -delete/-exec rm: can delete many files at once." },
+    { re: /(^|[\s;&|(`/\\])(shred|unlink|rmdir)(\s|$)/, msg: "shred/unlink/rmdir: deletes files or folders." },
+    { re: /(^|[\s;&|(`/\\])(dd|mkfs(\.\w+)?|fdisk|parted)(\s|$)/, msg: "dd/mkfs/fdisk: can overwrite or format disk/partition data." },
+    { re: /\b(curl|wget)\b[^\n|]*\|\s*(sudo\s+)?(ba|z|da)?sh\b/, msg: "curl|sh: downloads and executes a script from the internet without inspection." },
+    { re: /\b(chmod|chown)\s+(-\S*\s+)*-\S*R/, msg: "chmod/chown -R: changes permissions across an entire folder tree." },
     {
         re: /\bgit\s+(reset\s+--hard|clean\s+-\S*f|push\s+[^\n]*(--force|-f\b))/,
-        msg: "git reset --hard / clean -f / push --force: uncommitted ya remote kaam permanently ja sakta hai.",
+        msg: "git reset --hard / clean -f / push --force: can permanently discard uncommitted or remote work.",
     },
-    { re: /(^|[\s;&|(`/\\])(shutdown|reboot|poweroff|halt)(\s|$)/, msg: "shutdown/reboot: machine band ya restart ho jayegi." },
+    { re: /(^|[\s;&|(`/\\])(shutdown|reboot|poweroff|halt)(\s|$)/, msg: "shutdown/reboot: will shut down or restart the machine." },
 ];
 
 /**
- * Shell commands background jobs ke through chalte hain.
- * `run` foreground me wait karta hai; timeout ho to process KILL nahi hota, job ban jata hai.
- * `wait`/`status` se agent job track karta hai, `kill` se rok sakta hai.
+ * Shell commands run through background jobs.
+ * `run` waits in the foreground; on timeout the process is not killed, it becomes a job.
+ * The agent can track jobs with `wait`/`status` and stop them with `kill`.
  */
 export class BashTool extends Tool {
     name = "bash";

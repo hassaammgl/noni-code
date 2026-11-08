@@ -1,11 +1,11 @@
 import { Tool } from "./Tool";
 
-/** UI se user ka jawab lene wala callback (Tui.ask) */
+/** Callback that asks the UI/user for an answer (Tui.ask). */
 export type Asker = (question: string, options?: string[]) => Promise<string>;
 
 /**
- * Model ko guess karne ke bajaye user se poochne deta hai.
- * Ye tool kabhi block nahi karta: jawab khali ho to bhi text wapas jata hai.
+ * Lets the model ask the user instead of guessing.
+ * This tool never blocks on an empty answer: it returns text even if the response is blank.
  */
 export class AskUserTool extends Tool {
     name = "ask_user";

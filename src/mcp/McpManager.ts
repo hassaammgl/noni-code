@@ -3,7 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Tool } from "../tools/Tool";
 import type { McpServerConfig } from "../config/Config";
 
-/** MCP server ka har tool ek normal Tool ban jata hai */
+/** Each MCP server tool becomes a normal Tool. */
 class McpTool extends Tool {
     override dangerous = true;
     constructor(
@@ -26,7 +26,7 @@ class McpTool extends Tool {
 export class McpManager {
     private clients: Client[] = [];
 
-    /** Config ke enabled servers connect karo aur unke tools return karo */
+    /** Connect configured/enabled servers and return their tools. */
     async load(servers: Record<string, McpServerConfig> = {}): Promise<Tool[]> {
         const tools: Tool[] = [];
         for (const [server, cfg] of Object.entries(servers)) {

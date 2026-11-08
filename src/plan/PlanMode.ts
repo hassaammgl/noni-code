@@ -1,4 +1,4 @@
-/** Plan mode ka shared switch. TUI aur web server ek hi instance use karte hain. */
+/** Shared plan-mode switch used by the TUI and web server. */
 export class PlanMode {
     private value: boolean;
 

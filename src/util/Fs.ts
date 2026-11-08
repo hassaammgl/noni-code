@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { access, readFile, stat, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 
-/** File ya folder exist karta hai ya nahi */
+/** Whether a file or folder exists. */
 export async function exists(path: string | URL): Promise<boolean> {
     try {
         await access(path);

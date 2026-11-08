@@ -41,17 +41,17 @@ First launch shows a model picker. `Enter` picks the smallest installed chat mod
 - **Nested todos** — plan tasks and subtasks, iterate with `next`/`done`.
 - **Background jobs** — long builds keep running; wait, check status, or kill them.
 - **MCP tools** — load extra tools from the global config `~/.config/noni-chan/config.json`.
-- **Images (vision)** — `/img <path>` se agla message image ke saath model ko jata hai (vision-supporting models pe).
-- **Update check** — startup pe aur long sessions me har 6h npm pe naya version dekhta hai; `/update` se manual.
-- **Web client** — optional React VRM avatar + voice + chat UI (`client/`), `noni serve` ke local bridge se wahi agent/tools chalata hai.
-- **History** — har chat SQLite me save hoti hai; TUI `/history` aur web History button se wapas kholo.
-- **Skills (`.ai`)** — tool/flow instructions markdown packs me; prompt me sirf index, poora text on demand.
-- **Plan mode** — `/plan` se read-only investigation; agent plan deta hai, approve karne par hi edits chalte hain.
+- **Images (vision)** — `/img <path>` attaches an image to the next message (vision-capable models).
+- **Update check** — checks npm for a new version at startup and every 6 hours in long sessions; `/update` runs a manual check.
+- **Web client** — optional React VRM avatar + voice + chat UI (`client/`), driven by the same agent/tools through a local `noni serve` bridge.
+- **History** — every chat is saved to SQLite; reopen with TUI `/history` or the web History button.
+- **Skills (`.ai`)** — tool/flow instructions as markdown packs; the prompt includes only an index, with full text loaded on demand.
+- **Plan mode** — `/plan` enables read-only investigation; the agent proposes a plan and edits run only after approval.
 - **Small-model friendly TUI** — compact output, previews before risky edits, spinner with elapsed time.
 
 ## Commands
 
-| Command | Kaam |
+| Command | Description |
 |---|---|
 | `/help` | command list |
 | `/tools` | tools and dangerous markers |
@@ -59,18 +59,18 @@ First launch shows a model picker. `Enter` picks the smallest installed chat mod
 | `/todos clear` | clear the plan |
 | `/jobs` | background jobs |
 | `/jobs kill <id>` | stop a background job |
-| `/img <path>` | image attach karo — agli message ke saath jayegi |
-| `/img clear` | pending image hatao |
+| `/img <path>` | attach an image to the next message |
+| `/img clear` | remove the pending image |
 | `/model <name>` | switch model |
-| `/history [id]` | saved sessions list karo / load karo |
-| `/skills` | `.ai` skills list karo |
-| `/skills <name>` | ek skill ka content dekho |
-| `/skills reload` | skills disk se dobara padho |
-| `/plan [on\|off]` | read-only plan mode; approve karne par tools khulte hain |
-| `/clear` | chat clear — naya session |
+| `/history [id]` | list or load saved sessions |
+| `/skills` | list `.ai` skills |
+| `/skills <name>` | view a skill's content |
+| `/skills reload` | reload skills from disk |
+| `/plan [on\|off]` | read-only plan mode; tools unlock after approval |
+| `/clear` | clear chat — start a new session |
 | `/think` | toggle model thinking |
-| `/client on [port]` | web UI server **usi process** me start karo (default 4317) |
-| `/client off` | web UI server band karo |
+| `/client on [port]` | start the web UI server in the **same process** (default 4317) |
+| `/client off` | stop the web UI server |
 | `/client` | client status + usage |
 | `/update` | check npm for a newer version |
 | `/exit` | quit |
@@ -83,7 +83,7 @@ First launch shows a model picker. `Enter` picks the smallest installed chat mod
 | `write_file`, `edit_file`, `replace_lines`, `delete_file` | modify workspace files (confirm + preview) |
 | `move_file`, `make_dir` | rename/move files, create folders |
 | `git` | `status`/`diff`/`log`/`show`/`branch` + `add`/`commit` (no push) |
-| `ask_user` | model ambiguous ho to guess karne ki jagah poochhta hai |
+| `ask_user` | asks the user when the request is ambiguous instead of guessing |
 | `bash` | shell commands; long ones move to background jobs |
 | `glob`, `grep` | find files / search contents |
 | `web_search`, `web_fetch` | search and read pages |
@@ -136,13 +136,13 @@ The agent can work on other todos while a job runs. Jobs are stopped when the ap
 
 ```
 /img ~/Pictures/screenshot.png
-ye error screenshot me kya hai?
+what is the error in this screenshot?
 ```
 
-- Sirf vision wale models (jaise `qwen3.5`) — Ollama `capabilities` se check hota hai, warna saaf error.
-- Max 10 MB, aur file `image/*` honi chahiye (extension/mime se).
-- `/img clear` pending image hata deta hai; `/clear` chat ke saath image bhi reset karta hai.
-- Logs me sirf path aur size jata hai — base64 kabhi log nahi hota.
+- Vision-capable models only (e.g. `qwen3.5`) — checked via Ollama `capabilities`; otherwise a clear error is shown.
+- Max 10 MB, and the file must be an image (`image/*` by extension/MIME).
+- `/img clear` removes the pending image; `/clear` also resets it with the chat.
+- Logs include only path and size — base64 is never logged.
 
 ## Configuration
 
@@ -154,10 +154,10 @@ ye error screenshot me kya hai?
 | `OLLAMA_NUM_PREDICT` | `4096` | max generated tokens |
 | `OLLAMA_TEMPERATURE` | `0.4` | sampling temperature |
 | `SEARXNG_URL` | `http://localhost:8080` | SearXNG instance |
-| `NONI_NO_UPDATE_CHECK` | — | `1` = update checks skip (offline/CI ke liye) |
-| `NONI_UPDATE_INTERVAL_MS` | `21600000` (6h) | long session me dobara check ka interval |
+| `NONI_NO_UPDATE_CHECK` | — | `1` = skip update checks (for offline/CI) |
+| `NONI_UPDATE_INTERVAL_MS` | `21600000` (6h) | recheck interval in long sessions |
 | `NONI_HISTORY_DB` | `~/.local/share/noni-chan/history.db` | SQLite chat history path |
-| `NONI_PLAN_MODE` | `on` | plan-first default; `off` = startup se write tools enabled |
+| `NONI_PLAN_MODE` | `on` | plan-first default; `off` = enable write tools at startup |
 | `NONI_SKILLS_DIR` | — | extra skills folder(s), `:` se separated |
 
 MCP servers come from the global config at `~/.config/noni-chan/config.json` (or `$XDG_CONFIG_HOME/noni-chan/config.json`):
@@ -177,9 +177,9 @@ MCP servers come from the global config at `~/.config/noni-chan/config.json` (or
 }
 ```
 
-`disabled: true` wale servers skip ho jate hain. File na ho to app bina MCP tools ke chalti hai.
+Servers with `disabled: true` are skipped. If the file is missing, the app runs without MCP tools.
 
-Same file me model defaults bhi hain — context length by default har model ki max hoti hai:
+The same file can set model defaults — by default, context length uses each model's maximum:
 
 ```json
 {
@@ -188,84 +188,84 @@ Same file me model defaults bhi hain — context length by default har model ki 
 }
 ```
 
-`num_ctx` ko number (jaise `32768`) kar do to usi value pe cap ho jayegi. `OLLAMA_NUM_CTX` env isse bhi upar hai (emergency override).
+Set `num_ctx` to a number (e.g. `32768`) to cap it at that value. The `OLLAMA_NUM_CTX` env var overrides this (emergency override).
 
 ## Web client (`noni serve`)
 
-Browser UI (`client/` — VRM avatar + voice + chat) agent ko local HTTP/SSE bridge se chalata hai: history, tool cards, confirm dialogs aur voice, sab ek jagah. Animation tester dashboard hata diya hai; idle/motions khud chalti rehti hain.
+The browser UI (`client/` — VRM avatar + voice + chat) drives the agent through a local HTTP/SSE bridge: history, tool cards, confirm dialogs, and voice in one place. The animation tester dashboard was removed; idle/motions run automatically.
 
-**TUI se hi on/off (same process, same agent):**
+**Toggle from the TUI (same process, same agent):**
 
 ```text
 /client on          # default http://127.0.0.1:4317
 /client on 5000     # custom port
-/client off         # server band
+/client off         # stop server
 /client             # status
 ```
 
-**Ya alag process me:**
+**Or in a separate process:**
 
 ```bash
 bun run serve              # http://127.0.0.1:4317
-bun run serve --port 5000  # ya NONI_PORT=5000
+bun run serve --port 5000  # or NONI_PORT=5000
 ```
 
-- Server sirf **127.0.0.1** pe bind hota hai; default me koi token nahi.
-- `client/dist` build ho to **`http://127.0.0.1:4317/`** pe UI khud serve hoti hai; build na ho to setup page dikhta hai.
-- UI build: `cd client && bun install && bun run build` (UI change ke baad dobara).
-- Hot-reload dev ke liye: `cd client && bun run dev` → `http://localhost:5173` (`VITE_NONI_URL` se server URL).
-- `NONI_SERVE_TOKEN=secret` set karo to client ko `x-noni-token` header bhejna hoga.
-- CORS sirf localhost origins (+ `NONI_SERVE_ORIGIN`) allow karta hai.
+- The server binds only to **127.0.0.1**; no token is required by default.
+- If `client/dist` is built, the UI is served at **`http://127.0.0.1:4317/`**; otherwise a setup page is shown.
+- Build the UI: `cd client && bun install && bun run build` (rebuild after UI changes).
+- For hot-reload dev: `cd client && bun run dev` → `http://localhost:5173` (server URL via `VITE_NONI_URL`).
+- Set `NONI_SERVE_TOKEN=secret` to require the client to send an `x-noni-token` header.
+- CORS allows only localhost origins (+ `NONI_SERVE_ORIGIN`).
 - Endpoints: `GET /api/health`, `/api/state`, `/api/models`; `POST /api/chat` (SSE), `/api/confirm`, `/api/answer`, `/api/model`, `/api/clear`.
-- Dangerous tools ka confirm server-side hi enforce hota hai — browser sirf allow/deny bhejta hai.
-- TUI aur web ek waqt me ek hi run chalate hain; dusra try kare to busy warning milti hai.
+- Dangerous tool confirmation is enforced server-side — the browser only sends allow/deny.
+- The TUI and web run one agent task at a time; a concurrent request returns a busy warning.
 
 ## History
 
-Har user/assistant message SQLite me save hota hai:
+Every user/assistant message is saved to SQLite:
 
-- Default: `~/.local/share/noni-chan/history.db` (`NONI_HISTORY_DB` se badal sakte ho)
-- TUI: `/history` list, `/history <id>` load, `/clear` naya session
+- Default: `~/.local/share/noni-chan/history.db` (override with `NONI_HISTORY_DB`)
+- TUI: `/history` list, `/history <id>` load, `/clear` starts a new session
 - Web: **History** button, **+ New** naya chat
-- TUI aur web same DB share karte hain
+- The TUI and web share the same DB
 
 ## Skills (`.ai`)
 
-Persona chhoti rehti hai; tool/flow ki detail `.ai/skills/` me markdown packs ke roop me rehti hai.
+The persona stays small; tool/flow details live as markdown packs in `.ai/skills/`.
 
-- System prompt me sirf **index** jata hai (`- name: one-line description`).
-- Agent zarurat par `skill {"action":"read","name":"tools"}` se poora text load karta hai.
+- The system prompt includes only an **index** (`- name: one-line description`).
+- The agent loads full text on demand with `skill {"action":"read","name":"tools"}`.
 - Built-in skills: `tools`, `workflow`, `bash`, `files`, `docs`, `web`, `git`, `security`, `aiml`, `research`.
-- Apni skill add karo: `<project>/.ai/skills/mera-skill.md` (frontmatter: `name`, `description`).
+- Add your own skill: `<project>/.ai/skills/my-skill.md` (frontmatter: `name`, `description`).
 - Priority: `<project>/.ai` → `~/.config/noni-chan/.ai` → package `.ai` → `NONI_SKILLS_DIR`.
 - TUI: `/skills`, `/skills <name>`, `/skills reload`.
 
-Format aur examples: `.ai/README.md`.
+Format and examples: `.ai/README.md`.
 
 ## Plan mode
 
-Plan-first **default ON** hai: startup pe agent read-only hota hai. `/plan off` se band karo, ya poora default hi badalna ho to `NONI_PLAN_MODE=off` set karo.
+Plan-first is **ON by default**: the agent starts read-only. Use `/plan off` to disable, or set `NONI_PLAN_MODE=off` to change the default.
 
-`/plan` se read-only planning on/off hota hai (web UI me **Plan** button). Flow:
+`/plan` toggles read-only planning (web UI: **Plan** button). Flow:
 
-1. Agent sirf read tools use karta hai — `read_file`, `list_dir`, `glob`, `grep`, `read_docs`, `web_search`, `web_fetch`, `git status/diff/log/show`, `system_info`, `todo`, `skill`.
-2. Jab picture clear ho, wo `exit_plan` tool se nested plan deta hai.
-3. TUI `y/N` poochta hai; web me **Approve & execute** modal aata hai.
-4. Approve → plan mode OFF, plan todo list ban jata hai, aur agent **khud poora plan execute karta hai** — `todo next` → step → `done` → next, beech me permission maangne ke liye nahi rukta. Reject → mode ON rehta hai, agent plan revise karta hai.
+1. The agent uses only read tools — `read_file`, `list_dir`, `glob`, `grep`, `read_docs`, `web_search`, `web_fetch`, `git status/diff/log/show`, `system_info`, `todo`, `skill`.
+2. When the picture is clear, it submits a nested plan via the `exit_plan` tool.
+3. The TUI asks `y/N`; the web UI shows an **Approve & execute** modal.
+4. Approve → plan mode OFF, the plan becomes a todo list, and the agent **executes the full plan** — `todo next` → step → `done` → next, without stopping to ask for permission between steps. Reject → mode stays ON and the agent revises the plan.
 
-Blocked cheezein: `write_file`, `edit_file`, `replace_lines`, `delete_file`, `move_file`, `make_dir`, `bash run/start/kill`, `git add/commit`, aur MCP tools.
+Blocked actions: `write_file`, `edit_file`, `replace_lines`, `delete_file`, `move_file`, `make_dir`, `bash run/start/kill`, `git add/commit`, and MCP tools.
 
-Approved plan ke andar file edits (`write_file`, `edit_file`, `replace_lines`, `delete_file`, `move_file`, `make_dir`) dobara Allow nahi maangte — plan approval hi unka approval hai. `bash`, `git commit` jaise commands phir bhi confirm karte hain.
+Within an approved plan, file edits (`write_file`, `edit_file`, `replace_lines`, `delete_file`, `move_file`, `make_dir`) do not ask for Allow again — plan approval covers them. Commands like `bash` and `git commit` still require confirmation.
 
 ## Retries
 
-- **Plan auto-run** — approved plan ke todos bache hon aur model ruk jaye, to runtime khud "continue" nudge bhejta hai (max 10). Uske baad `plan auto-run paused` warning aata hai.
-- **Timeout** — Ollama request/stream timeout par `num_ctx` aadha karke wahi request dobara chalti hai (minimum 4096).
-- **Network / 5xx** — `ECONNREFUSED`, `ECONNRESET`, `fetch failed`, 429/500/502/503/504 par 3 attempts, 400ms × attempt backoff. Sirf tab jab abhi koi content stream na hua ho, taake duplicate text na dikhe.
-- **Tool failure** — tool ka error model ko wapas jata hai; wo khud doosra approach leta hai. User ne deny kiya to retry nahi hota.
-- **Sab fail ho jaye** — error UI me aata hai; plan adhoora ho to `continue` bhej kar resume karo.
+- **Plan auto-run** — if an approved plan still has todos and the model stops, the runtime sends a "continue" nudge (max 10). After that, a `plan auto-run paused` warning appears.
+- **Timeout** — on an Ollama request/stream timeout, the request retries with `num_ctx` halved (minimum 4096).
+- **Network / 5xx** — `ECONNREFUSED`, `ECONNRESET`, `fetch failed`, 429/500/502/503/504 retry 3 times with 400ms × attempt backoff. Only when no content has streamed yet, to avoid duplicate text.
+- **Tool failure** — the tool error is returned to the model, which tries a different approach. If the user denied the action, it is not retried.
+- **All retries fail** — the error appears in the UI; if a plan is incomplete, send `continue` to resume.
 
-Roadmap aur bache hue gaps: [`TODO.md`](TODO.md).
+Roadmap and remaining gaps: [`TODO.md`](TODO.md).
 
 ## Local development
 
@@ -323,18 +323,3 @@ npm cache clean --force
 - Images need a vision model (checked via Ollama `capabilities`). Image data is base64 in memory, never in logs; older images stay in the chat history, so long image chats eat context — `/clear` resets.
 - The docs guard sees import lines, not every dynamic API use.
 - Very small models can still produce malformed tool calls. 2B+ models are more reliable.
-
-
-lets add image feature becuse its already in this model lets add this feature or first history feature what do u think 
-import ollama from 'ollama'
-
-const imagePath = '/absolute/path/to/image.jpg'
-const response = await ollama.chat({
-  model: 'gemma4',
-  messages: [
-    { role: 'user', content: 'What is in this image?', images: [imagePath] }
-  ],
-  stream: false,
-})
-
-console.log(response.message.content)

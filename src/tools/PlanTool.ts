@@ -6,7 +6,7 @@ const MAX_PLAN_CHARS = 6_000;
 
 /**
  * Plan mode se bahar nikalne ka approved raasta.
- * User plan approve kare to mode OFF ho jata hai aur plan todo list ban jata hai.
+ * When the user approves the plan, mode turns OFF and the plan becomes a todo list.
  */
 export class ExitPlanTool extends Tool {
     name = "exit_plan";
@@ -57,7 +57,7 @@ export class ExitPlanTool extends Tool {
 
         this.mode.set(false);
 
-        // Approved plan ko todo list bana do, taake execution track ho
+        // Convert the approved plan into a todo list so execution can be tracked
         let saved = "";
         try {
             const tree = parseOutline(plan);
@@ -67,7 +67,7 @@ export class ExitPlanTool extends Tool {
                 saved = `\n${this.todos.render()}`;
             }
         } catch {
-            // free-form plan: todos skip, approval phir bhi valid
+            // free-form plan: skip todos; approval is still valid
         }
 
         return (

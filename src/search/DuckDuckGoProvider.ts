@@ -4,7 +4,7 @@ const USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Fir
 
 function decodeEntities(s: string): string {
     const codePoint = (cp: number) => {
-        // 0xD800-0xDFFF surrogates hain, 0x10FFFF se bade invalid. Inhe drop karo, poora search fail na ho.
+        // 0xD800-0xDFFF are surrogates and values above 0x10FFFF are invalid. Drop them so search does not fail.
         if (!Number.isFinite(cp) || cp < 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) return "";
         try {
             return String.fromCodePoint(cp);
@@ -25,7 +25,7 @@ function decodeEntities(s: string): string {
 const clean = (s: string) => decodeEntities(s).replace(/\s+/g, " ").trim();
 
 /**
- * DDG ke result links redirect hote hain: //duckduckgo.com/l/?uddg=<encoded real url>&rut=...
+ * DDG result links are redirects: //duckduckgo.com/l/?uddg=<encoded real url>&rut=...
  * Asli URL nikalo. duckduckgo.com ke apne links (ads: /y.js) bina uddg ke -> "" (drop).
  */
 function unwrap(href: string): string {
@@ -42,7 +42,7 @@ function unwrap(href: string): string {
     return u.href;
 }
 
-/** HTML -> results. Alag export hai taake bina internet ke test ho sake. */
+/** HTML -> results. Exported separately so it can be tested without internet. */
 export async function parseDuckDuckGo(html: string): Promise<SearchResult[]> {
     type Raw = { href: string; title: string; snippet: string; ad: boolean };
     const items: Raw[] = [];
@@ -81,7 +81,7 @@ export async function parseDuckDuckGo(html: string): Promise<SearchResult[]> {
     return results;
 }
 
-/** Bina key wala DuckDuckGo (HTML endpoint). Scraping hai, isliye fallback ke taur pe rakho. */
+/** Keyless DuckDuckGo (HTML endpoint). Uses scraping, so keep it as a fallback. */
 export class DuckDuckGoProvider extends SearchProvider {
     readonly name = "duckduckgo";
 
@@ -99,13 +99,13 @@ export class DuckDuckGoProvider extends SearchProvider {
         } catch {
             throw new Error(signal.aborted ? "timed out" : "not reachable");
         }
-        // 200 ke alawa (jaise 202) aksar rate-limit / bot check hota hai
-        if (res.status !== 200) throw new Error(`HTTP ${res.status} (rate limited ya blocked ho sakta hai)`);
+        // non-200 responses (e.g. 202) often indicate rate limiting or a bot check
+        if (res.status !== 200) throw new Error(`HTTP ${res.status} (may be rate limited or blocked)`);
 
         const html = await res.text();
         const results = await parseDuckDuckGo(html);
         if (!results.length && /anomaly|captcha|unusual traffic/i.test(html)) {
-            throw new Error("bot check / captcha aaya, thodi der baad try karo");
+            throw new Error("bot check/captcha detected; try again later");
         }
         return results.slice(0, limit * 2);
     }

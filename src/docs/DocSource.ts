@@ -10,13 +10,13 @@ export interface DocPage {
     source: string; // "installed package", "PyPI", "web"...
     location: string; // path ya URL
     text: string;
-    hint?: string; // model ko aage kahan dekhna hai
-    thin?: boolean; // sirf metadata mila (README nahi): agla source try karo, kuch na mile to yahi dedo
+    hint?: string; // where the model should look next
+    thin?: boolean; // metadata only (no README): try the next source; return this if nothing else is found
 }
 
 /**
  * Docs ka ek source (local package, system headers, registry, web...).
- * find() null de to "yahan nahi mila", agla source try hoga. Error throw karo to bhi agla try hoga.
+ * If find() returns null, try the next source. Thrown errors also fall through to the next source.
  */
 export abstract class DocSource {
     abstract readonly label: string;
@@ -39,7 +39,7 @@ export function normalizeLang(raw: unknown): Lang {
     return LANGS[String(raw ?? "").toLowerCase().trim()] ?? "other";
 }
 
-/** Name command/path me jata hai, isliye sakht check: koi flag, "..", ya ajeeb character nahi */
+/** Name is used in commands/paths, so validate strictly: no flags, "..", or unusual characters. */
 export function validateName(raw: unknown): string {
     const n = String(raw ?? "").trim().replace(/^<|>$/g, "").replace(/^std::/, "");
     if (!n) throw new Error("name is empty");
@@ -51,7 +51,7 @@ import { spawn } from "node:child_process";
 
 /**
  * Command chalao aur uska output lo. Command na mile ya crash ho to null.
- * Non-zero exit code bhi normal result hai (code me milta hai) — callers decide karte hain.
+ * A non-zero exit code can still be a valid result — callers decide how to handle it.
  */
 export async function runCmd(
     cmd: string[],
@@ -84,9 +84,9 @@ export async function runCmd(
             out += String(chunk);
         });
         child.stderr?.on("data", () => {
-            // drain: buffer bharne na do, output me nahi chahiye
+            // drain: do not let the buffer fill; output is not needed
         });
-        child.on("error", () => finish(null)); // command install nahi hai
+        child.on("error", () => finish(null)); // command is not installed
         child.on("close", (code) => finish({ out, code: code ?? -1 }));
     });
 }
@@ -95,8 +95,8 @@ export async function runCmd(
 const HEADING = /^(#{1,4} .+|[A-Z][A-Z ]{3,})$/;
 
 /**
- * Bada doc ho to: shuru ka intro + topic se sabse zyada match karne wale sections (original order me).
- * Topic na ho ya kuch match na kare to bas shuru ka hissa.
+ * For large docs: keep the intro plus sections that best match the topic (in original order).
+ * If no topic is provided or nothing matches, return the beginning.
  */
 export function extractRelevant(text: string, topic: string | undefined, max = MAX_DOC_CHARS): string {
     const t = text.trim();
@@ -134,7 +134,7 @@ export function extractRelevant(text: string, topic: string | undefined, max = M
         chosen.add(i);
         used += len;
     }
-    if (chosen.size === 1) return t.slice(0, max - note.length) + note; // kuch match nahi hua
+    if (chosen.size === 1) return t.slice(0, max - note.length) + note; // no topic match found
 
     return (
         [...chosen]

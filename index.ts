@@ -12,15 +12,15 @@ const cwd = process.cwd();
 const updatePromise = checkForUpdate();
 const ui = new Tui();
 
-// Agent + tools ek hi jagah se: TUI aur `noni serve` dono yahi runtime use karte hain
+// Agent + tools from one place: both the TUI and `noni serve` use this runtime
 const model = await pickModel(ui);
 const runtime = await createRuntime({ cwd, model, ui });
 const { agent, jobs, todos } = runtime;
 if (runtime.configError) {
-  ui.warn(`config.json padha nahi gaya (${runtime.configError}); defaults use kar rahi hoon`);
+  ui.warn(`could not read config.json (${runtime.configError}); using defaults`);
 }
 
-/** `/client on|off` — wahi process, wahi agent aur tools. */
+/** `/client on|off` — same process, same agent and tools. */
 const webUi = new WebAgentUI();
 const CLIENT_PORT = Number(process.env.NONI_PORT) || 4317;
 let client: RunningServer | null = null;
@@ -32,17 +32,17 @@ async function clientOn(port = CLIENT_PORT) {
     return;
   }
   if (clientStarting) {
-    ui.log("client start ho raha hai…");
+    ui.log("client is starting…");
     return;
   }
   clientStarting = true;
   try {
     client = await startServer({ runtime, ui: webUi, port });
     ui.log(`client ON → ${client.url}`);
-    if (process.env.NONI_SERVE_TOKEN) ui.log("token chahiye (x-noni-token)");
-    ui.log("browser me kholo; band karne ke liye /client off");
+    if (process.env.NONI_SERVE_TOKEN) ui.log("token required (x-noni-token)");
+    ui.log("open in browser; use /client off to stop");
   } catch (e: any) {
-    ui.error(`client start nahi hua: ${e.message}`);
+    ui.error(`client failed to start: ${e.message}`);
   } finally {
     clientStarting = false;
   }
@@ -68,7 +68,7 @@ let busy = false;
 let closing = false;
 let shuttingDown = false;
 
-/** /img se attach hui image — agle message ke saath jati hai, phir clear */
+/** Image attached via /img — sent with the next message, then cleared */
 let pendingImage: { path: string; base64: string; bytes: number } | null = null;
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -85,7 +85,7 @@ const IMAGE_MIME: Record<string, string> = {
   ".avif": "image/avif",
 };
 
-/** Image file → base64. Log me sirf path/size jata hai, data kabhi nahi */
+/** Image file → base64. Logs only path/size, never the data */
 async function loadImage(raw: string) {
   const clean = raw.trim().replace(/^~(?=$|\/)/, homedir());
   const abs = resolve(cwd, clean);
@@ -100,7 +100,7 @@ async function loadImage(raw: string) {
   if (!IMAGE_MIME[ext]) throw new Error(`not an image (${ext || "no extension"}): ${clean}`);
   if (info.size > MAX_IMAGE_BYTES) throw new Error(`image too big: ${(info.size / 1e6).toFixed(1)} MB (max 10 MB)`);
   if (!(await agent.supportsVision())) {
-    throw new Error(`model ${agent.model} vision support nahi karta; /model se vision wala model chuno`);
+    throw new Error(`model ${agent.model} does not support vision; choose a vision-capable model with /model`);
   }
   return { path: clean, base64: (await readFile(abs)).toString("base64"), bytes: info.size };
 }
@@ -118,7 +118,7 @@ async function shutdown() {
 
 ui.onExit(async () => {
   closing = true;
-  // Stream ke beech Ctrl-D se process na mare, pehle current run poora hone do
+  // On Ctrl-D during a stream, let the current run finish before exiting
   if (busy) return;
   await shutdown();
   process.exit(0);
@@ -126,10 +126,10 @@ ui.onExit(async () => {
 
 ui.banner(agent.model, agent.listTools().length, todos.size);
 if (runtime.planMode.on) {
-  ui.log("plan mode ON (read-only) — agent plan dega, approve karne par tools khulenge. Band karne ke liye: /plan off");
+  ui.log("plan mode ON (read-only) — the agent will propose a plan; tools unlock after approval. Use /plan off to disable");
 }
 
-/** Ek hi latest version ka warning dobara na dikhe */
+/** Avoid showing the same latest-version warning twice */
 let notifiedVersion = "";
 function showUpdate(info: UpdateInfo, force = false) {
   if (!force && notifiedVersion === info.latest) return;
@@ -146,7 +146,7 @@ const update = await updatePromise;
 if (update.status === "update") showUpdate(update);
 
 while (true) {
-  // Long session me bhi naya version pakdo: har 6 ghante (ya env override) pe check
+  // Detect new versions in long sessions: check every 6 hours (or env override)
   if (Date.now() - lastUpdateCheck >= UPDATE_INTERVAL_MS) {
     lastUpdateCheck = Date.now();
     const refreshed = await checkForUpdate();
@@ -163,11 +163,11 @@ while (true) {
 
   if (input === "/exit") ui.close();
   else if (input === "/clear") {
-    if (runtime.runLock.busy) ui.warn("agent busy hai — jab chat khatam ho tab /clear karo");
+    if (runtime.runLock.busy) ui.warn("agent is busy — run /clear after the chat finishes");
     else {
       runtime.newSession();
       pendingImage = null;
-      ui.log("chat clear — naya session shuru");
+      ui.log("chat cleared — new session started");
     }
   }
   else if (input === "/think") {
@@ -178,7 +178,7 @@ while (true) {
     runtime.planMode.set(want);
     ui.log(
       want
-        ? "plan mode ON — read-only investigation; agent exit_plan se approval maangega, phir tools khulenge"
+        ? "plan mode ON — read-only investigation; the agent will request approval via exit_plan, then tools unlock"
         : "plan mode OFF — write/run tools enabled",
     );
   } else if (input === "/client" || input.startsWith("/client ")) {
@@ -204,11 +204,11 @@ while (true) {
                   `${String(s.id).padStart(3)}  ${s.updatedAt.slice(0, 16).replace("T", " ")}  ${s.title}`,
               )
               .join("\n")
-          : "koi history nahi",
+          : "no history",
       );
       ui.log(`current: #${runtime.sessionId}`);
     } else if (runtime.runLock.busy) {
-      ui.warn("agent busy hai — history baad me load karo");
+      ui.warn("agent is busy — load history later");
     } else {
       const id = Number(arg);
       if (!Number.isInteger(id)) {
@@ -232,15 +232,15 @@ while (true) {
       const skills = runtime.skills.list();
       ui.log(
         skills.length
-          ? `${skills.length} skills (.ai)\n${runtime.skills.renderList()}\n\n/skills <name> dekhne ke liye, /skills reload disk se dobara`
-          : `koi skill nahi mili\n${runtime.skills.locations().join("\n")}`,
+          ? `${skills.length} skills (.ai)\n${runtime.skills.renderList()}\n\nUse /skills <name> to view a skill, /skills reload to reload from disk`
+          : `no skills found\n${runtime.skills.locations().join("\n")}`,
       );
     } else if (arg === "reload") {
       const skills = await runtime.skills.load();
-      ui.log(`${skills.length} skills reload ho gayi`);
+      ui.log(`${skills.length} skills reloaded`);
     } else {
       const skill = runtime.skills.get(arg);
-      if (!skill) ui.warn(`skill "${arg}" nahi mili — /skills se list dekho`);
+      if (!skill) ui.warn(`skill "${arg}" not found — use /skills to list available skills`);
       else {
         const body = skill.body.length > 1600 ? `${skill.body.slice(0, 1600)}\n…` : skill.body;
         ui.log(`# ${skill.name} (${skill.source}: ${skill.path})\n\n${body}`);
@@ -252,26 +252,26 @@ while (true) {
     if (result.status === "update") showUpdate(result, true);
     else if (result.status === "current") ui.log(`up to date: ${result.name} ${result.current}`);
     else if (result.reason === "disabled") ui.warn("update check disabled (NONI_NO_UPDATE_CHECK)");
-    else ui.warn("update check failed (offline ya npm registry down?)");
+    else ui.warn("update check failed (offline or npm registry down?)");
   } else if (input === "/help")
     ui.log(
       [
-        "/help            ye list",
+        "/help            show this list",
         "/tools           tools + dangerous markers",
         "/todos           current plan",
-        "/todos clear     plan hatao",
+        "/todos clear     clear the plan",
         "/jobs            background jobs",
-        "/jobs kill <id>  job band karo",
-        "/img <path>      image agle message ke saath bhejo",
-        "/img clear       pending image hatao",
+        "/jobs kill <id>  stop a job",
+        "/img <path>      attach an image to the next message",
+        "/img clear       remove the pending image",
         "/model <name>    model switch",
-        "/clear           chat history clear (naya session)",
-        "/history [id]    saved sessions dekho / load karo",
-        "/skills          .ai skills list / content / reload",
-        "/plan [on|off]   read-only plan mode (exit_plan se approval)",
+        "/clear           clear chat history (new session)",
+        "/history [id]    list or load saved sessions",
+        "/skills          list, view, or reload .ai skills",
+        "/plan [on|off]   read-only plan mode (approval via exit_plan)",
         "/think           thinking on/off",
-        "/client on|off   web UI server on/off (same process)",
-        "/update          npm pe naya version check karo",
+        "/client on|off   start/stop web UI server (same process)",
+        "/update          check npm for a new version",
         "/exit            quit",
       ].join("\n"),
     );
@@ -300,32 +300,32 @@ while (true) {
   } else if (input === "/img") {
     ui.log(
       pendingImage
-        ? `image ready: ${pendingImage.path} (${fmtSize(pendingImage.bytes)}) — ab sawaal likho`
-        : "usage: /img <path>   (agli message ke saath jayegi)",
+        ? `image ready: ${pendingImage.path} (${fmtSize(pendingImage.bytes)}) — type your question`
+        : "usage: /img <path>   (attached to the next message)",
     );
   } else if (input.startsWith("/img ")) {
     const arg = input.slice(4).trim();
     if (arg === "clear") {
       pendingImage = null;
-      ui.log("image hata di");
+      ui.log("image removed");
     } else {
       try {
         pendingImage = await loadImage(arg);
-        ui.log(`image ready: ${pendingImage.path} (${fmtSize(pendingImage.bytes)}) — ab sawaal likho`);
+        ui.log(`image ready: ${pendingImage.path} (${fmtSize(pendingImage.bytes)}) — type your question`);
       } catch (e: any) {
         ui.error(e.message);
       }
     }
   } else if (input.startsWith("/model")) {
     if (runtime.runLock.busy) {
-      ui.warn("agent busy hai — model baad me switch karo");
+      ui.warn("agent is busy — switch the model later");
       continue;
     }
     agent.model = input.split(" ")[1] ?? agent.model;
     ui.log(`model: ${agent.model}`);
   } else {
     if (!runtime.runLock.tryAcquire()) {
-      ui.warn("web client chat chal raha hai — /client off karo ya thoda wait karo");
+      ui.warn("web client chat is running — use /client off or wait");
       continue;
     }
     busy = true;

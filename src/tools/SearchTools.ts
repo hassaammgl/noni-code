@@ -17,8 +17,8 @@ function normalizeGlob(p: string): string {
 }
 
 /**
- * Chhota glob → regex. Sirf wahi syntax jo hum use karte hain: `**` (kai folders), `*` (ek folder ke andar), `?`.
- * Isliye koi external glob dependency nahi chahiye.
+ * Small glob → regex converter. Supports only the syntax used here: `**` (many folders), `*` (within one folder), `?`.
+ * Avoids an external glob dependency.
  */
 class GlobPattern {
     private re: RegExp;
@@ -53,7 +53,7 @@ class GlobPattern {
     }
 }
 
-/** Base class: workspace ke andar files ka walk. node_modules/.git skip, symlinks follow nahi hote. */
+/** Base class: walks files inside the workspace. Skips node_modules/.git and does not follow symlinks. */
 abstract class SearchTool extends Tool {
     constructor(protected root: string) {
         super();
@@ -81,7 +81,7 @@ abstract class SearchTool extends Tool {
             if (e.isDirectory()) {
                 if (!IGNORED.has(e.name)) yield* this.walk(full);
             } else if (e.isFile()) {
-                yield full; // symlinks (isSymbolicLink) jaan bujh kar skip: workspace se bahar nahi jaate
+                yield full; // symlinks (isSymbolicLink) are intentionally skipped: do not traverse outside the workspace
             }
         }
     }
@@ -162,7 +162,7 @@ export class GrepTool extends SearchTool {
             const info = await stat(file).catch(() => null);
             if (!info || info.size > MAX_FILE_BYTES) continue;
 
-            // pehle 1 KB se binary check, poori file tabhi padho jab zaroorat ho
+            // check the first 1 KB for binary content; read the full file only when needed
             const handle = await open(file, "r");
             let head: Buffer;
             try {

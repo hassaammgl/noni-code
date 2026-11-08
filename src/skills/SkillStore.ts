@@ -5,7 +5,7 @@ import { basename, delimiter, dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readText } from "../util/Fs";
 
-/** Skill kahan se aayi — index me sirf naam/description jata hai, source debug ke liye. */
+/** Where a skill came from — the index includes only name/description; source is for debugging. */
 export type SkillSource = "builtin" | "global" | "project" | "custom";
 
 export interface Skill {
@@ -21,7 +21,7 @@ const MAX_BODY_CHARS = 24_000;
 const MAX_DESCRIPTION_CHARS = 240;
 const MAX_DEPTH = 4;
 
-/** Built-in skills package ke saath ship hoti hain: <package>/.ai/skills */
+/** Built-in skills ship with the package: <package>/.ai/skills */
 const BUILTIN_DIR = fileURLToPath(new URL("../../.ai/skills", import.meta.url));
 
 function configBase(): string {
@@ -81,7 +81,7 @@ async function walk(dir: string, out: string[], depth = 0): Promise<void> {
     try {
         entries = await readdir(dir, { withFileTypes: true });
     } catch {
-        return; // folder na mile to koi error nahi
+        return; // no error if the folder is missing
     }
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
@@ -97,10 +97,10 @@ async function walk(dir: string, out: string[], depth = 0): Promise<void> {
 }
 
 /**
- * Skills = markdown instruction packs. Index system prompt me jata hai, poora body sirf
- * `skill` tool se load hota hai. Isse persona chhoti rehti hai aur context bachta hai.
+ * Skills = markdown instruction packs. The index goes into the system prompt; full body loads only
+ * via the `skill` tool. This keeps the persona small and saves context.
  *
- * Priority (baad wali jeet ti hai): builtin → global → project → NONI_SKILLS_DIR.
+ * Priority (later wins): builtin → global → project → NONI_SKILLS_DIR.
  */
 export class SkillStore {
     private skills = new Map<string, Skill>();
@@ -125,7 +125,7 @@ export class SkillStore {
         return roots;
     }
 
-    /** Disk se dobara padho. Purani list replace ho jati hai. */
+    /** Reload from disk. Replaces the current list. */
     async load(): Promise<Skill[]> {
         const merged = new Map<string, Skill>();
 
@@ -168,7 +168,7 @@ export class SkillStore {
         return this.list().map((s) => s.name);
     }
 
-    /** System prompt me sirf ye chhota index jata hai. */
+    /** Only this compact index goes into the system prompt. */
     renderIndex(): string {
         return this.list()
             .map((s) => `- ${s.name}: ${s.description || "(no description)"}`)
@@ -181,7 +181,7 @@ export class SkillStore {
             .join("\n");
     }
 
-    /** Skill folders jinhe dekh rahe hain (debug / `/skills where`). */
+    /** Skill folders being scanned (debug / `/skills where`). */
     locations(): string[] {
         return this.roots().map((r) => `${r.source}: ${r.dir}`);
     }

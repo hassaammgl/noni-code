@@ -5,7 +5,7 @@ const USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Fir
 const TAIL_CHARS = 2_000;
 const MAX_CHARS = 2_000_000;
 
-/** Default readable output size. Head + tail dono rakhe jate hain, beech ka hissa kata jata hai. */
+/** Default readable output size. Keeps both head and tail; trims the middle. */
 export const MAX_PAGE_CHARS = 8_000;
 export const FETCH_TIMEOUT_MS = 15_000;
 
@@ -33,7 +33,7 @@ const NAMED_ENTITIES: Record<string, string> = {
 /** HTML entities -> text. Numeric pehle, &amp; sabse aakhir me (double decode na ho). */
 export function decodeEntities(s: string): string {
     const codePoint = (cp: number) => {
-        // 0xD800-0xDFFF surrogates hain, 0x10FFFF se bade invalid. Inhe drop karo, poora fetch fail na ho.
+        // 0xD800-0xDFFF are surrogates and values above 0x10FFFF are invalid. Drop them so fetch does not fail.
         if (!Number.isFinite(cp) || cp < 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) return "";
         try {
             return String.fromCodePoint(cp);
@@ -47,7 +47,7 @@ export function decodeEntities(s: string): string {
         .replace(/&([a-z][a-z0-9]+);/gi, (m, name: string) => NAMED_ENTITIES[name.toLowerCase()] ?? m);
 }
 
-/** Output bada ho to shuru aur end rakho (BashTool jaisa hi pattern). */
+/** For large output, keep the start and end (same pattern as BashTool). */
 function truncate(s: string, maxChars = MAX_PAGE_CHARS): string {
     if (s.length <= maxChars) return s;
     const tail = Math.min(TAIL_CHARS, Math.floor(maxChars / 4));
@@ -57,8 +57,8 @@ function truncate(s: string, maxChars = MAX_PAGE_CHARS): string {
 }
 
 /**
- * HTML -> readable text. Bina parser library ke: script/style/head hatao,
- * block tags ko newline banao, baaki tags ko space, phir entities decode + whitespace clean.
+ * HTML -> readable text. Without a parser library: remove script/style/head,
+ * turn block tags into newlines, other tags into spaces, then decode entities and clean whitespace.
  */
 export function htmlToText(html: string): string {
     const withoutHidden = html
@@ -84,7 +84,7 @@ function titleOf(html: string): string {
     return decodeEntities(raw).replace(/\s+/g, " ").trim();
 }
 
-/** Body ko cap tak padho, phir stream band kar do (bada page memory na bhare). */
+/** Read the body up to the cap, then close the stream (avoid loading large pages into memory). */
 async function readCapped(res: Response, cap: number): Promise<string> {
     if (!res.body) return "";
     const reader = res.body.getReader();
@@ -103,8 +103,8 @@ async function readCapped(res: Response, cap: number): Promise<string> {
 }
 
 /**
- * URL fetch karke readable text deta hai. web_fetch tool aur docs sources dono isi ko use karte hain,
- * taake validation, content-type check aur truncation ek hi jagah rahe.
+ * Fetches a URL and returns readable text. Used by both the web_fetch tool and docs sources,
+ * so validation, content-type checks, and truncation live in one place.
  */
 export async function fetchPageText(
     url: string,
@@ -156,7 +156,7 @@ export async function fetchPageText(
     return `${head}\n\n${truncate(text, maxChars) || "(no readable text)"}`;
 }
 
-/** URL fetch karke readable text deta hai. Search ke baad best result padhne ke liye. */
+/** Fetches a URL and returns readable text. Useful for reading the best search result. */
 export class WebFetchTool extends Tool {
     name = "web_fetch";
     description =
@@ -177,7 +177,7 @@ export class WebFetchTool extends Tool {
     }
 }
 
-/** Search ka kaam SearchEngine karta hai (SearXNG -> DuckDuckGo fallback). Tool bas model ke liye format karta hai. */
+/** SearchEngine performs the search (SearXNG -> DuckDuckGo fallback). This tool only formats results for the model. */
 export class WebSearchTool extends Tool {
     name = "web_search";
     description =

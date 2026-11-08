@@ -16,13 +16,13 @@ export interface LlmSettings {
 }
 
 export interface NoniConfig {
-    /** Global config me MCP servers `mcp.servers` ke andar rehte hain */
+    /** In the global config, MCP servers live under `mcp.servers`. */
     mcp: { servers: Record<string, McpServerConfig> };
-    /** Model defaults — abhi sirf context length */
+    /** Model defaults — currently only context length. */
     llm: LlmSettings;
 }
 
-/** Config ki jagah: $XDG_CONFIG_HOME/noni-chan/config.json, warna ~/.config/noni-chan/config.json */
+/** Config location: $XDG_CONFIG_HOME/noni-chan/config.json, otherwise ~/.config/noni-chan/config.json */
 export function configPath(): string {
     const base = process.env.XDG_CONFIG_HOME?.trim() || join(homedir(), ".config");
     return join(base, "noni-chan", "config.json");
@@ -32,7 +32,7 @@ function defaultConfig(): NoniConfig {
     return { mcp: { servers: {} }, llm: { num_ctx: "max" } };
 }
 
-/** Global config padho. File na mile ya JSON kharab ho to defaults ke saath error wapas. */
+/** Read global config. Returns defaults with an error if the file is missing or JSON is invalid. */
 export async function loadConfig(path = configPath()): Promise<{ config: NoniConfig; path: string; error?: string }> {
     if (!(await exists(path))) return { config: defaultConfig(), path };
 

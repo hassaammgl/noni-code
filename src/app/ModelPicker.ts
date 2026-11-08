@@ -2,7 +2,7 @@ import { Ollama } from "ollama";
 
 export const FALLBACK_MODEL = "qwen3.5:0.8b";
 
-/** Model picker ke liye sirf itna UI chahiye (Tui isse satisfy karta hai). */
+/** Minimal UI required by the model picker (satisfied by Tui). */
 export interface ModelPickerUI {
     warn(msg: string): void;
     chooseModel(
@@ -11,7 +11,7 @@ export interface ModelPickerUI {
     ): Promise<string>;
 }
 
-/** "752.39M" / "1.9B" -> billions, taake sabse chhota model pehle aaye. */
+/** "752.39M" / "1.9B" -> billions, so the smallest model sorts first. */
 export function paramsB(text: string): number {
     const m = /([\d.]+)\s*([KMBT])/i.exec(text);
     if (!m) return Number.POSITIVE_INFINITY;
@@ -20,7 +20,7 @@ export function paramsB(text: string): number {
     return n * (unit === "K" ? 1e-6 : unit === "M" ? 1e-3 : unit === "B" ? 1 : 1e3);
 }
 
-/** Ollama se chat-capable models, sabse chhota pehle. */
+/** Fetch chat-capable models from Ollama, smallest first. */
 export async function listChatModels(ollama: Ollama) {
     const { models } = await ollama.list();
     return models
@@ -41,7 +41,7 @@ export async function listChatModels(ollama: Ollama) {
         .sort((a, b) => a.order - b.order || a.bytes - b.bytes);
 }
 
-/** Startup pe model chuno. OLLAMA_MODEL set ho ya stdin TTY na ho to bina puche wahi/fallback. */
+/** Select a model at startup. If OLLAMA_MODEL is set or stdin is not a TTY, use it/fallback without prompting. */
 export async function pickModel(ui: ModelPickerUI): Promise<string> {
     const fromEnv = process.env.OLLAMA_MODEL?.trim();
     if (fromEnv) return fromEnv;
@@ -53,18 +53,18 @@ export async function pickModel(ui: ModelPickerUI): Promise<string> {
     try {
         const choices = await listChatModels(ollama);
         if (!choices.length) {
-            ui.warn(`koi chat model nahi mila, ${FALLBACK_MODEL} use kar rahi hoon`);
+            ui.warn(`no chat models found; using ${FALLBACK_MODEL}`);
             return FALLBACK_MODEL;
         }
-        return await ui.chooseModel(choices, 0); // sabse chhota = default
+        return await ui.chooseModel(choices, 0); // smallest = default
     } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        ui.warn(`Ollama se model list nahi aayi (${msg}); ${FALLBACK_MODEL} use kar rahi hoon`);
+        ui.warn(`could not fetch model list from Ollama (${msg}); using ${FALLBACK_MODEL}`);
         return FALLBACK_MODEL;
     }
 }
 
-/** Server mode: env, warna pehla chat model, warna fallback. */
+/** Server mode: env, otherwise the first chat model, otherwise fallback. */
 export async function pickModelHeadless(): Promise<string> {
     const fromEnv = process.env.OLLAMA_MODEL?.trim();
     if (fromEnv) return fromEnv;

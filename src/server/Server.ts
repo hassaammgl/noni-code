@@ -42,11 +42,11 @@ const MISSING_PAGE = `<!doctype html>
 </style></head>
 <body><main>
   <h1>Noni API is running</h1>
-  <p>Browser UI ka build abhi nahi mila (<code>client/dist</code>). Do me se ek karo:</p>
+  <p>Browser UI build not found (<code>client/dist</code>). Choose one option:</p>
   <pre>cd client
 bun install
 bun run build</pre>
-  <p>phir ye page reload karo. Ya hot-reload ke saath:</p>
+  <p>then reload this page. Or run with hot reload:</p>
   <pre>cd client
 bun run dev</pre>
   <p>aur <a href="http://localhost:5173">http://localhost:5173</a> kholo.</p>
@@ -136,7 +136,7 @@ async function sendFile(file: string, res: ServerResponse): Promise<boolean> {
     }
 }
 
-/** `client/dist` se UI serve karo; build na ho to setup page dikhao. */
+/** Serve the UI from `client/dist`; show a setup page if the build is missing. */
 async function serveClient(pathname: string, res: ServerResponse): Promise<void> {
     const file = clientFile(pathname);
     if (file && (await sendFile(file, res))) return;
@@ -152,7 +152,7 @@ async function serveClient(pathname: string, res: ServerResponse): Promise<void>
         return;
     }
 
-    // missing asset (js/css/wasm/vrm) ko index.html na bhejo
+    // do not serve index.html for missing assets (js/css/wasm/vrm)
     if (file && extname(file)) {
         res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
         res.end("not found");
@@ -175,7 +175,7 @@ export interface RunningServer {
     stop(): Promise<void>;
 }
 
-/** Local HTTP + SSE bridge: browser client yahi se agent ko chalata hai. */
+/** Local HTTP + SSE bridge used by the browser client to drive the agent. */
 export function startServer({
     runtime,
     ui,

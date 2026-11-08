@@ -55,7 +55,7 @@ function stripStatusMark(text: string): string {
     return text.replace(/^\[[ xX~!]\]\s*/, "").trim();
 }
 
-/** "1.2 Title", "1) Title", "- Title" jaise prefixes hatao; numbered lines se depth bhi mil jati hai. */
+/** Remove prefixes like "1.2 Title", "1) Title", "- Title"; numbered lines also indicate depth. */
 function bulletText(line: string): { text: string; numberDepth?: number } {
     const trimmed = line.trim();
     const dotted = /^(\d+(?:\.\d+)+)[.)]?\s+(.+)$/.exec(trimmed);
@@ -108,8 +108,8 @@ export function parseOutline(raw: string): TodoInput[] {
 }
 
 /**
- * Model se aane wala plan thoda alag shape me ho sakta hai: JSON string, single object,
- * indented outline, ya {name, children} instead of {title, subtasks}. Sab normalize karo.
+ * Plans from the model may arrive in different shapes: JSON string, single object,
+ * indented outline, or {name, children} instead of {title, subtasks}. Normalize all forms.
  */
 export function normalizeTree(raw: unknown): TodoInput[] {
     if (typeof raw === "string") {
@@ -145,7 +145,7 @@ export function normalizeTree(raw: unknown): TodoInput[] {
 }
 
 /**
- * In-memory task tree. IDs hierarchical hain ("1", "1.2", "1.2.3"), taake model
+ * In-memory task tree. IDs are hierarchical ("1", "1.2", "1.2.3") so the model
  * ko parent/child references dene me confusion na ho.
  */
 export class TodoStore {
@@ -213,7 +213,7 @@ export class TodoStore {
         return todo;
     }
 
-    /** Subtree ke saath task hatao. Return: kitne tasks hate. */
+    /** Remove a task and its subtree. Returns the number of tasks removed. */
     remove(id: string): number {
         const todo = this.get(id);
         let removed = 0;
@@ -238,7 +238,7 @@ export class TodoStore {
         this.roots = [];
     }
 
-    /** DFS order me pehla actionable leaf. Blocked leaves skip hote hain. */
+    /** First actionable leaf in DFS order. Blocked leaves are skipped. */
     next(): Todo | undefined {
         const walk = (ids: string[]): Todo | undefined => {
             for (const id of ids) {

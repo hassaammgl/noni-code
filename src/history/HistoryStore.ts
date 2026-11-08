@@ -42,7 +42,7 @@ function titleFor(content: string): string {
     return one.length > 60 ? `${one.slice(0, 60)}…` : one || "New chat";
 }
 
-/** SQLite chat history: sessions + messages. TUI aur web dono share karte hain. */
+/** SQLite chat history: sessions + messages. Shared by the TUI and web. */
 export class HistoryStore {
     private db: Database;
 
@@ -93,7 +93,7 @@ export class HistoryStore {
             .run(sessionId, msg.role, msg.content, msg.thinking ?? null, time);
         this.db.query("UPDATE sessions SET updated_at = ? WHERE id = ?").run(time, sessionId);
 
-        // Pehla user message session ka title bana deta hai
+        // The first user message becomes the session title
         if (msg.role === "user" && msg.content.trim()) {
             this.db
                 .query("UPDATE sessions SET title = ? WHERE id = ? AND title = 'New chat'")

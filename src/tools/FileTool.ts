@@ -2,7 +2,7 @@ import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/p
 import { dirname, relative, resolve } from "node:path";
 import { Tool } from "./Tool";
 
-/** Confirm prompt me content ka chhota preview, poori file nahi. */
+/** Small content preview for confirm prompts, not the full file. */
 function snippet(value: unknown, maxLines = 8): string {
     const lines = String(value ?? "").split("\n");
     const shown = lines.slice(0, maxLines);
@@ -10,7 +10,7 @@ function snippet(value: unknown, maxLines = 8): string {
     return shown.map((line) => `  ${line}`).join("\n") + (more > 0 ? `\n  … +${more} lines` : "");
 }
 
-/** Path exist karta hai ya nahi (file ya folder) */
+/** Whether a path exists (file or folder). */
 async function exists(p: string): Promise<boolean> {
     try {
         await stat(p);
@@ -20,7 +20,7 @@ async function exists(p: string): Promise<boolean> {
     }
 }
 
-/** Base class: sab file tools workspace ke andar hi rehte hain */
+/** Base class: all file tools stay inside the workspace. */
 abstract class FileTool extends Tool {
     constructor(private root: string) {
         super();
@@ -130,11 +130,11 @@ export class ReplaceLinesTool extends FileTool {
 
         const start = Number(start_line);
         const end = Number(end_line);
-        if (!Number.isInteger(start) || start < 1) throw new Error(`start_line >= 1 hona chahiye (mila: ${start_line})`);
-        if (!Number.isInteger(end)) throw new Error(`end_line integer hona chahiye (mila: ${end_line})`);
-        if (start > lines.length + 1) throw new Error(`start_line ${start} file se aage hai (total ${lines.length} lines)`);
-        if (end > lines.length) throw new Error(`end_line ${end} file se aage hai (total ${lines.length} lines)`);
-        if (end < start - 1) throw new Error(`end_line ${end} start_line ${start} se pehle hai`);
+        if (!Number.isInteger(start) || start < 1) throw new Error(`start_line must be >= 1 (got: ${start_line})`);
+        if (!Number.isInteger(end)) throw new Error(`end_line must be an integer (got: ${end_line})`);
+        if (start > lines.length + 1) throw new Error(`start_line ${start} is past the end of the file (${lines.length} lines total)`);
+        if (end > lines.length) throw new Error(`end_line ${end} is past the end of the file (${lines.length} lines total)`);
+        if (end < start - 1) throw new Error(`end_line ${end} is before start_line ${start}`);
 
         const raw = String(new_content ?? "");
         const replacement = raw === "" ? [] : (raw.endsWith("\n") ? raw.slice(0, -1) : raw).split("\n");

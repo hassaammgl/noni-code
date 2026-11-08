@@ -3,7 +3,7 @@ import { pickModelHeadless } from "./src/app/ModelPicker";
 import { startServer } from "./src/server/Server";
 import { WebAgentUI } from "./src/server/WebAgentUI";
 
-/** `--port 4317` ya NONI_PORT, warna default. */
+/** `--port 4317` or NONI_PORT, otherwise the default. */
 function portFromArgs(): number {
     const i = process.argv.indexOf("--port");
     const raw = i > -1 ? process.argv[i + 1] : process.env.NONI_PORT;
@@ -17,7 +17,7 @@ const model = await pickModelHeadless();
 const ui = new WebAgentUI();
 const runtime = await createRuntime({ cwd: process.cwd(), model, ui });
 if (runtime.configError) {
-    console.warn(`config.json padha nahi gaya (${runtime.configError}); defaults use ho rahe hain`);
+    console.warn(`could not read config.json (${runtime.configError}); using defaults`);
 }
 
 const server = await startServer({ runtime, ui, port });
@@ -25,7 +25,7 @@ console.log(
     `noni serve → ${server.url}  ·  model: ${runtime.agent.model}  ·  ${runtime.agent.listTools().length} tools`,
 );
 if (!process.env.NONI_SERVE_TOKEN) {
-    console.log("  local-only (127.0.0.1); token chahiye to NONI_SERVE_TOKEN set karo");
+    console.log("  local-only (127.0.0.1); set NONI_SERVE_TOKEN to require a token");
 }
 
 let closing = false;

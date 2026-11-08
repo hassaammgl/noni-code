@@ -4,7 +4,7 @@ import { Tool } from "./Tool";
 const ACTIONS = ["status", "diff", "log", "show", "branch", "add", "commit"] as const;
 const MAX_OUTPUT = 10_000;
 
-/** Lambe git output ko head + tail me kaat do, taake context na bhare */
+/** Trim long git output to head + tail to avoid filling context */
 function clip(text: string): string {
     if (text.length <= MAX_OUTPUT) return text;
     const cut = text.length - MAX_OUTPUT;
@@ -12,8 +12,8 @@ function clip(text: string): string {
 }
 
 /**
- * Git ke liye alag safe tool — har chhote kaam ke liye bash me shell string nahi banti.
- * Sirf read-only actions + add/commit; push/reset jaisi cheezein jaan bujh ke nahi hain.
+ * Dedicated safe Git tool — avoids building shell strings for routine operations.
+ * Only read-only actions plus add/commit; push/reset-like actions are intentionally excluded.
  */
 export class GitTool extends Tool {
     name = "git";
@@ -38,7 +38,7 @@ export class GitTool extends Tool {
         super();
     }
 
-    /** Sirf commit destructive maana gaya; add wapas unstage ho sakta hai */
+    /** Only commit is treated as destructive; add can be unstaged. */
     override dangerousFor(args: Record<string, any>): boolean {
         return actionOf(args) === "commit";
     }
@@ -89,7 +89,7 @@ export class GitTool extends Tool {
         }
     }
 
-    /** Args array se chalao (shell string nahi), output clip karke wapas */
+    /** Run with an args array (not a shell string) and return clipped output. */
     private git(args: string[]): Promise<string> {
         return new Promise((resolve, reject) => {
             const child = spawn("git", args, {
@@ -106,7 +106,7 @@ export class GitTool extends Tool {
             child.stderr?.on("data", (chunk) => {
                 err += String(chunk);
             });
-            child.on("error", () => reject(new Error(`git ${args[0]} start nahi hua (git installed hai?)`)));
+            child.on("error", () => reject(new Error(`failed to start git ${args[0]} (is git installed?)`)));
             child.on("close", (code) => {
                 const text = clip([out, err].filter(Boolean).join("\n").trim());
                 if (code !== 0) reject(new Error(text || `git ${args[0]} failed (exit ${code})`));
