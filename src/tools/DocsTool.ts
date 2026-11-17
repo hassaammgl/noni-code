@@ -5,8 +5,8 @@ import { Tool } from "./Tool";
 const SOURCE_TIMEOUT_MS = 12_000;
 
 /**
- * Code likhne se pehle docs padho. Sources order me try hote hain (local pehle, internet last).
- * Docs mile ya na mile, registry me mark ho jata hai taake DocsGuard model ko atka na de.
+ * Read docs before writing code. Sources are tried in order (local first, internet last).
+ * Whether docs are found or not, the library is marked in the registry so DocsGuard does not deadlock the model.
  */
 export class ReadDocsTool extends Tool {
     name = "read_docs";
@@ -46,7 +46,7 @@ export class ReadDocsTool extends Tool {
             try {
                 const page = await s.find({ name, lang, topic }, AbortSignal.timeout(SOURCE_TIMEOUT_MS));
                 if (page?.thin) {
-                    thin ??= page; // sirf metadata: agla source behtar de sakta hai
+                    thin ??= page; // metadata only: the next source may provide better docs
                     tried.push(`${s.label}: only metadata`);
                     continue;
                 }
@@ -60,7 +60,7 @@ export class ReadDocsTool extends Tool {
             }
         }
 
-        this.registry.mark(name); // dobara block nahi hoga (deadlock se bachne ke liye)
+        this.registry.mark(name); // do not block again (avoids deadlock)
         if (thin) return format(name, thin);
         return (
             `No docs found for "${name}" (${tried.join("; ") || "no source for this language"}). ` +

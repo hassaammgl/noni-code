@@ -1,4 +1,4 @@
-import { readdir, stat } from "node:fs/promises";
+import { open, readdir, readFile, stat } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { Tool } from "./Tool";
 
@@ -16,7 +16,44 @@ function normalizeGlob(p: string): string {
     return q.includes("/") ? q : `**/${q}`;
 }
 
-/** Base class: workspace ke andar files ka walk. node_modules/.git skip, symlinks follow nahi hote. */
+/**
+ * Small glob → regex converter. Supports only the syntax used here: `**` (many folders), `*` (within one folder), `?`.
+ * Avoids an external glob dependency.
+ */
+class GlobPattern {
+    private re: RegExp;
+    constructor(pattern: string) {
+        let out = "^";
+        for (let i = 0; i < pattern.length; i++) {
+            const c = pattern[i]!;
+            if (c === "*") {
+                if (pattern[i + 1] === "*") {
+                    i++; // doosra "*" kha gaya
+                    if (pattern[i + 1] === "/") {
+                        i++;
+                        out += "(?:[^/]+/)*"; // "**/" = zero ya zyada folders
+                    } else {
+                        out += ".*";
+                    }
+                } else {
+                    out += "[^/]*"; // "*" ek hi folder level
+                }
+            } else if (c === "?") {
+                out += "[^/]";
+            } else if ("\\^$.|+()[]{}".includes(c)) {
+                out += `\\${c}`;
+            } else {
+                out += c;
+            }
+        }
+        this.re = new RegExp(`${out}$`);
+    }
+    match(path: string) {
+        return this.re.test(path);
+    }
+}
+
+/** Base class: walks files inside the workspace. Skips node_modules/.git and does not follow symlinks. */
 abstract class SearchTool extends Tool {
     constructor(protected root: string) {
         super();
@@ -44,7 +81,7 @@ abstract class SearchTool extends Tool {
             if (e.isDirectory()) {
                 if (!IGNORED.has(e.name)) yield* this.walk(full);
             } else if (e.isFile()) {
-                yield full; // symlinks (isSymbolicLink) jaan bujh kar skip: workspace se bahar nahi jaate
+                yield full; // symlinks (isSymbolicLink) are intentionally skipped: do not traverse outside the workspace
             }
         }
     }
@@ -68,7 +105,7 @@ export class GlobTool extends SearchTool {
         const info = await this.statOrThrow(base, path ?? ".");
         if (!info.isDirectory()) throw new Error(`${path} is a file, not a folder`);
 
-        const glob = new Bun.Glob(normalizeGlob(pattern));
+        const glob = new GlobPattern(normalizeGlob(pattern));
         const found: string[] = [];
         let more = false;
         for await (const file of this.walk(base)) {
@@ -113,7 +150,7 @@ export class GrepTool extends SearchTool {
 
         const target = this.resolve(path);
         const info = await this.statOrThrow(target, path ?? ".");
-        const filter = glob ? new Bun.Glob(normalizeGlob(glob)) : null;
+        const filter = glob ? new GlobPattern(normalizeGlob(glob)) : null;
         const base = info.isDirectory() ? target : resolve(target, "..");
         const files = info.isDirectory() ? this.walk(target) : (async function* () { yield target; })();
 
@@ -122,13 +159,23 @@ export class GrepTool extends SearchTool {
 
         outer: for await (const file of files) {
             if (filter && !filter.match(relative(base, file))) continue;
-            const f = Bun.file(file);
-            if (f.size > MAX_FILE_BYTES) continue;
-            const head = new Uint8Array(await f.slice(0, 1024).arrayBuffer());
+            const info = await stat(file).catch(() => null);
+            if (!info || info.size > MAX_FILE_BYTES) continue;
+
+            // check the first 1 KB for binary content; read the full file only when needed
+            const handle = await open(file, "r");
+            let head: Buffer;
+            try {
+                const buf = Buffer.alloc(1024);
+                const { bytesRead } = await handle.read(buf, 0, buf.length, 0);
+                head = buf.subarray(0, bytesRead);
+            } finally {
+                await handle.close();
+            }
             if (head.includes(0)) continue; // binary
 
             const rel = relative(this.root, file);
-            const lines = (await f.text()).split("\n");
+            const lines = (await readFile(file, "utf8")).split("\n");
             for (let i = 0; i < lines.length; i++) {
                 if (!re.test(lines[i]!)) continue;
                 if (hits.length >= MAX_GREP_MATCHES) {

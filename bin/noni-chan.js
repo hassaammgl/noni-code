@@ -4,9 +4,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const entry = join(root, "index.ts");
+const args = process.argv.slice(2);
+// `noni-chan serve` web UI ke liye local server chalata hai
+const isServe = args[0] === "serve";
+const entry = join(root, isServe ? "serve.ts" : "index.ts");
+const entryArgs = isServe ? args.slice(1) : args;
 
-const child = spawn("bun", [entry, ...process.argv.slice(2)], {
+const child = spawn("bun", [entry, ...entryArgs], {
     stdio: "inherit",
     env: process.env,
 });

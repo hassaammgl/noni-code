@@ -8,17 +8,17 @@ export abstract class Tool {
 
     abstract run(args: Record<string, any>): Promise<string>;
 
-    /** Per-action danger: kuch tools (jaise bash status/wait) safe hote hain. */
+    /** Per-action danger: some actions (e.g. bash status/wait) are safe. */
     dangerousFor(_args: Record<string, any>): boolean {
         return this.dangerous;
     }
 
-    /** Risky cheezon ki list. Khali nahi hai to Agent double confirmation maangta hai. */
+    /** List of risky issues. If non-empty, the Agent requires double confirmation. */
     warnings(_args: Record<string, any>): string[] {
         return [];
     }
 
-    /** Optional: confirm se pehle dikhne wala preview. */
+    /** Optional preview shown before confirmation. */
     preview?(args: Record<string, any>): string | Promise<string>;
 
     toOllama(): OllamaTool {
