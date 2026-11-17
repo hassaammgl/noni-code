@@ -29,7 +29,7 @@ function blocked(label: string): string {
         `Plan mode is ON — ${label} is blocked (read-only). ` +
         "Investigate with read-only tools (read_file, list_dir, glob, grep, rag, read_docs, web_search, web_fetch, git status/diff/log, system_info). " +
         'Then call exit_plan with the plan: exit_plan {"plan":"1. ...\\n  1.1 ..."}. ' +
-        "The user must approve it before anything changes."
+        "The user must approve it before anything changes. Do not retry this tool in this turn."
     );
 }
 

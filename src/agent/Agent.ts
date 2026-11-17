@@ -50,6 +50,20 @@ const MIN_NUM_CTX = 4_096;
 const MAX_AUTO_CONTINUE = 10;
 /** Number of retries for network/5xx errors. */
 const MAX_TRANSIENT_RETRIES = 3;
+/** Identical calls (same tool, same arguments) allowed in one run before the turn is treated as stuck. */
+const MAX_IDENTICAL_CALLS = 3;
+/** Guard-blocked calls of one tool allowed in one run before the turn is stopped. */
+const MAX_GUARD_BLOCKS = 2;
+
+/** Calls that legitimately repeat with identical arguments inside one run. */
+function isRepeatableCall(name: string, args: Record<string, any>): boolean {
+    if (name === "todo") return true; // plan iteration: next/done in a loop
+    if (name === "bash") {
+        const action = String(args.action ?? "run").trim().toLowerCase();
+        return action !== "run" && action !== "start" && action !== "kill"; // status/wait/jobs polling
+    }
+    return false;
+}
 /** These file mutations do not require reconfirmation inside an approved plan. */
 const PLAN_WRITES = new Set([
     "write_file",
@@ -92,6 +106,8 @@ export class Agent {
     /** After plan approval: if todos remain, let the model continue on its own. */
     private continueCheck?: () => boolean;
     private autoContinues = 0;
+    /** Set by execute() when a guard rejected the call. */
+    private blockedByGuard = false;
     public think = false;
 
     constructor(
@@ -235,7 +251,7 @@ export class Agent {
 - Paths: relative to the working directory (e.g. src/index.ts). Don't wander outside it.
 - For battery, CPU, memory, disk and uptime, use the system_info tool. Never guess hardware numbers.
 - If the user asks about the system, answer from this block. Do not guess or contradict it.
-${planMode ? `\n## Plan mode (ACTIVE — read-only)\nYou may not edit files, create or delete anything, run commands, install, or commit. Investigate with read-only tools (read_file, list_dir, glob, grep, rag, read_docs, web_search, web_fetch, git status/diff/log/show, system_info, todo), then submit a short nested plan with exit_plan {"plan":"1. ...\\n  1.1 ..."}. The user must approve it before any change happens. If the user asks you to edit now, explain that plan mode is on and present the plan first.\n` : ""}${extra ? `\n## Current plan (live)\n${extra}\n` : ""}
+${planMode ? `\n## Plan mode (ACTIVE — read-only)\nYou may not edit files, create or delete anything, run commands, install, or commit. Investigate with read-only tools (read_file, list_dir, glob, grep, rag, read_docs, web_search, web_fetch, git status/diff/log/show, system_info, todo), then submit a short nested plan with exit_plan {"plan":"1. ...\\n  1.1 ..."}. The user must approve it before any change happens. If the user asks you to edit now, explain that plan mode is on and present the plan first. If a write or execute tool is blocked, never retry it with the same or similar arguments: call exit_plan with the plan, or tell the user to run /plan off. One blocked call is enough to change approach.\n` : ""}${extra ? `\n## Current plan (live)\n${extra}\n` : ""}
 ## Reminder (always true)
 - NONI is female and uses she/her pronouns. Keep self-references gender-consistent in English.
 - One short dry joke is fine. Two is a stand-up set, and this is a terminal.`;
@@ -275,6 +291,11 @@ ${planMode ? `\n## Plan mode (ACTIVE — read-only)\nYou may not edit files, cre
         let ctxOverride: number | undefined;
         // Consecutive network/5xx failures; reset on a successful stream
         let transientRetries = 0;
+        // Loop guards for this turn: repeated identical calls and repeated guard blocks
+        const repeats = new Map<string, number>();
+        const guardBlocks = new Map<string, number>();
+        let totalGuardBlocks = 0;
+        let stopReason: string | undefined;
 
         while (true) {
             this.ui.waiting?.();
@@ -414,13 +435,59 @@ ${planMode ? `\n## Plan mode (ACTIVE — read-only)\nYou may not edit files, cre
 
             for (const call of calls) {
                 const { name, arguments: args } = call.function;
+
+                // Already stopping? Keep the tool log valid for every announced call.
+                if (stopReason) {
+                    this.messages.push({ role: "tool", tool_name: name, content: `Error: skipped (${stopReason})` });
+                    continue;
+                }
+
+                // Identical call repeating: stop instead of letting a small model spin.
+                if (!isRepeatableCall(name, args)) {
+                    const key = `${name}:${JSON.stringify(args)}`;
+                    const seen = (repeats.get(key) ?? 0) + 1;
+                    repeats.set(key, seen);
+                    if (seen >= MAX_IDENTICAL_CALLS) {
+                        stopReason = `${name} repeated ${seen} times with the same arguments`;
+                        this.messages.push({
+                            role: "tool",
+                            tool_name: name,
+                            content:
+                                `Error: identical ${name} call repeated ${seen} times; stopped to prevent a loop. ` +
+                                `Do not call ${name} again with the same arguments. Change approach or reply to the user.`,
+                        });
+                        continue;
+                    }
+                }
+
                 this.messages.push({ role: "tool", tool_name: name, content: await this.execute(name, args) });
+
+                // Same tool rejected by a guard again: the model is not following the block message.
+                if (this.blockedByGuard) {
+                    totalGuardBlocks++;
+                    const blocked = (guardBlocks.get(name) ?? 0) + 1;
+                    guardBlocks.set(name, blocked);
+                    if (blocked >= MAX_GUARD_BLOCKS) {
+                        stopReason = `${name} blocked by a guard ${blocked} times`;
+                    } else if (totalGuardBlocks >= MAX_GUARD_BLOCKS * 2) {
+                        stopReason = `guards blocked this turn ${totalGuardBlocks} times`;
+                    }
+                }
+            }
+
+            if (stopReason) {
+                this.ui.warn?.(
+                    `loop stopped: ${stopReason}. Change approach; if plan mode is blocking the work, ` +
+                        "approve a plan with exit_plan or run /plan off.",
+                );
+                return;
             }
         }
     }
 
     private async execute(name: string, args: Record<string, any>): Promise<string> {
         const started = Date.now();
+        this.blockedByGuard = false;
         const tool = this.tools.get(name);
         if (!tool) return this.fail(`unknown tool ${name}`, name, started);
 
@@ -430,7 +497,10 @@ ${planMode ? `\n## Plan mode (ACTIVE — read-only)\nYou may not edit files, cre
             // Run guards before dangerous confirmation: blocked edits should not prompt the user
             for (const guard of this.guards) {
                 const blocked = await guard.check(tool, args);
-                if (blocked) return this.fail(blocked, name, started);
+                if (blocked) {
+                    this.blockedByGuard = true;
+                    return this.fail(blocked, name, started);
+                }
             }
 
             if (tool.dangerousFor(args) && !this.planWriteApproved(tool)) {
