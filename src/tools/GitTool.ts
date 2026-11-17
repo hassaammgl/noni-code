@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { isAbsolute, relative, resolve } from "node:path";
 import { Tool } from "./Tool";
 
 const ACTIONS = ["status", "diff", "log", "show", "branch", "add", "commit"] as const;
@@ -24,7 +25,7 @@ export class GitTool extends Tool {
         type: "object",
         properties: {
             action: { type: "string", enum: [...ACTIONS], description: "status/diff/log/show/branch/add/commit" },
-            path: { type: "string", description: "Limit diff/status/show to this path" },
+            path: { type: "string", description: "Repo-relative path to limit diff/status/show (e.g. src/index.ts, never absolute)" },
             ref: { type: "string", description: "Commit/ref for action=show or log (default HEAD / current branch)" },
             staged: { type: "boolean", description: "action=diff: show staged (--cached) changes" },
             limit: { type: "number", description: "action=log: how many commits (default 20, max 200)" },
@@ -52,7 +53,7 @@ export class GitTool extends Tool {
 
     async run(args: Record<string, any>) {
         const action = actionOf(args);
-        const path = String(args.path ?? "").trim();
+        const path = this.normalizePath(String(args.path ?? ""));
         const ref = String(args.ref ?? "").trim();
 
         switch (action) {
@@ -76,7 +77,9 @@ export class GitTool extends Tool {
             case "branch":
                 return (await this.git(["branch", "-a", "--no-color"])) || "(no branches)";
             case "add": {
-                const files = Array.isArray(args.files) ? args.files.map((f: any) => String(f)).filter(Boolean) : [];
+                const files = Array.isArray(args.files)
+                    ? args.files.map((f: any) => this.normalizePath(String(f))).filter(Boolean)
+                    : [];
                 return (await this.git(["add", ...(files.length ? files : ["-A"])])) || `staged ${files.length ? files.join(", ") : "all changes"}`;
             }
             case "commit": {
@@ -87,6 +90,19 @@ export class GitTool extends Tool {
             default:
                 throw new Error(`unknown action: ${action}. Use one of: ${ACTIONS.join(", ")}`);
         }
+    }
+
+    /**
+     * Git accepts repo-relative pathspecs only. Small models often send "/src/..."
+     * (the display form with a leading slash); strip it instead of failing the call.
+     */
+    private normalizePath(input: string): string {
+        const raw = input.trim();
+        if (!raw) return "";
+        const abs = isAbsolute(raw) ? raw : resolve(this.root, raw);
+        const rel = relative(this.root, abs);
+        if (rel && !rel.startsWith("..") && !isAbsolute(rel)) return rel;
+        return raw.replace(/^[/\\]+/, "");
     }
 
     /** Run with an args array (not a shell string) and return clipped output. */
