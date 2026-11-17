@@ -64,9 +64,6 @@ First launch shows a model picker. `Enter` picks the smallest installed chat mod
 | `/model <name>` | switch model |
 | `/history [id]` | list or load saved sessions |
 | `/rag` | local RAG: `status`, `index [path]`, `search <query>`, `clear` |
-| `/skills` | list `.ai` skills |
-| `/skills <name>` | view a skill's content |
-| `/skills reload` | reload skills from disk |
 | `/plan [on\|off]` | read-only plan mode; tools unlock after approval |
 | `/clear` | clear chat — start a new session |
 | `/think` | toggle model thinking |
@@ -160,7 +157,6 @@ what is the error in this screenshot?
 | `NONI_UPDATE_INTERVAL_MS` | `21600000` (6h) | recheck interval in long sessions |
 | `NONI_HISTORY_DB` | `~/.local/share/noni-chan/history.db` | SQLite chat history path |
 | `NONI_PLAN_MODE` | `on` | plan-first default; `off` = enable write tools at startup |
-| `NONI_SKILLS_DIR` | — | extra skills folder(s), `:` se separated |
 
 MCP servers come from the global config at `~/.config/noni-chan/config.json` (or `$XDG_CONFIG_HOME/noni-chan/config.json`):
 
@@ -231,26 +227,13 @@ Every user/assistant message is saved to SQLite:
 - Web: **History** button, **+ New** naya chat
 - The TUI and web share the same DB
 
-## Skills (`.ai`)
-
-The persona stays small; tool/flow details live as markdown packs in `.ai/skills/`.
-
-- The system prompt includes only an **index** (`- name: one-line description`).
-- The agent loads full text on demand with `skill {"action":"read","name":"tools"}`.
-- Built-in skills: `tools`, `workflow`, `bash`, `files`, `docs`, `web`, `git`, `security`, `aiml`, `research`.
-- Add your own skill: `<project>/.ai/skills/my-skill.md` (frontmatter: `name`, `description`).
-- Priority: `<project>/.ai` → `~/.config/noni-chan/.ai` → package `.ai` → `NONI_SKILLS_DIR`.
-- TUI: `/skills`, `/skills <name>`, `/skills reload`.
-
-Format and examples: `.ai/README.md`.
-
 ## Plan mode
 
 Plan-first is **ON by default**: the agent starts read-only. Use `/plan off` to disable, or set `NONI_PLAN_MODE=off` to change the default.
 
 `/plan` toggles read-only planning (web UI: **Plan** button). Flow:
 
-1. The agent uses only read tools — `read_file`, `list_dir`, `glob`, `grep`, `read_docs`, `web_search`, `web_fetch`, `git status/diff/log/show`, `system_info`, `todo`, `skill`.
+1. The agent uses only read tools — `read_file`, `list_dir`, `glob`, `grep`, `read_docs`, `web_search`, `web_fetch`, `git status/diff/log/show`, `system_info`, `todo`.
 2. When the picture is clear, it submits a nested plan via the `exit_plan` tool.
 3. The TUI asks `y/N`; the web UI shows an **Approve & execute** modal.
 4. Approve → plan mode OFF, the plan becomes a todo list, and the agent **executes the full plan** — `todo next` → step → `done` → next, without stopping to ask for permission between steps. Reject → mode stays ON and the agent revises the plan.
@@ -287,7 +270,6 @@ serve.ts              `noni serve` HTTP/SSE entry
 src/app/              shared runtime (agent + tools) and model picker
 src/history/          SQLite chat history (sessions + messages)
 src/plan/             plan mode switch + read-only guard
-src/skills/           `.ai` skill loader (index in prompt, body on demand)
 src/server/           web bridge (SSE + confirm/ask + static client)
 src/agent/            agent loop, guards, persona
 src/tools/            built-in tools
@@ -296,7 +278,6 @@ src/todos/            nested task store
 src/jobs/             background job manager
 src/search/           search providers + fallback engine
 src/ui/               terminal UI
-.ai/                  skill packs (markdown instructions)
 client/               React VRM avatar + voice + chat UI (optional)
 test/                 unit + integration tests
 ```
@@ -330,7 +311,7 @@ Noni includes a local RAG path for semantic codebase retrieval:
 It requires a local embedding model pulled in Ollama:
 
 ```bash
-ollama pull nomic-embed-text
+ollama pull nomic-embed-text-v2-moe
 /rag index
 /rag search where runtime wires tools
 ```
@@ -341,7 +322,7 @@ Config (`~/.config/noni-chan/config.json`):
 {
   "rag": {
     "enabled": true,
-    "embedModel": "nomic-embed-text",
+    "embedModel": "nomic-embed-text-v2-moe",
     "chunkSize": 1600,
     "chunkOverlap": 200,
     "topK": 6,
@@ -355,7 +336,7 @@ Config (`~/.config/noni-chan/config.json`):
 
 
 - Ollama is the only provider right now (no Anthropic/Gemini/OpenAI adapters yet).
-- Local RAG uses Ollama embeddings; you must pull an embedding model (default `nomic-embed-text`). Without it, `/rag index` and `rag search/index` will report embedding errors. Retrieval is chunk-based semantic search, not an LSP or full AST graph.
+- Local RAG uses Ollama embeddings; you must pull an embedding model (default `nomic-embed-text-v2-moe`). Without it, `/rag index` and `rag search/index` will report embedding errors. Retrieval is chunk-based semantic search, not an LSP or full AST graph.
 - Images need a vision model (checked via Ollama `capabilities`). Image data is base64 in memory, never in logs; older images stay in the chat history, so long image chats eat context — `/clear` resets.
 - The docs guard sees import lines, not every dynamic API use.
 - Very small models can still produce malformed tool calls. 2B+ models are more reliable.

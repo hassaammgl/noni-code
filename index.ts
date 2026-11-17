@@ -259,26 +259,6 @@ while (true) {
         }
       }
     }
-  } else if (input === "/skills" || input.startsWith("/skills ")) {
-    const arg = input.slice(7).trim();
-    if (!arg) {
-      const skills = runtime.skills.list();
-      ui.log(
-        skills.length
-          ? `${skills.length} skills (.ai)\n${runtime.skills.renderList()}\n\nUse /skills <name> to view a skill, /skills reload to reload from disk`
-          : `no skills found\n${runtime.skills.locations().join("\n")}`,
-      );
-    } else if (arg === "reload") {
-      const skills = await runtime.skills.load();
-      ui.log(`${skills.length} skills reloaded`);
-    } else {
-      const skill = runtime.skills.get(arg);
-      if (!skill) ui.warn(`skill "${arg}" not found — use /skills to list available skills`);
-      else {
-        const body = skill.body.length > 1600 ? `${skill.body.slice(0, 1600)}\n…` : skill.body;
-        ui.log(`# ${skill.name} (${skill.source}: ${skill.path})\n\n${body}`);
-      }
-    }
   } else if (input === "/update") {
     ui.log("checking npm for updates...");
     const result = await checkForUpdate();
@@ -301,7 +281,6 @@ while (true) {
         "/clear           clear chat history (new session)",
         "/history [id]    list or load saved sessions",
         "/rag             RAG status/index/search/clear",
-        "/skills          list, view, or reload .ai skills",
         "/plan [on|off]   read-only plan mode (approval via exit_plan)",
         "/think           thinking on/off",
         "/client on|off   start/stop web UI server (same process)",

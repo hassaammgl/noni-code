@@ -13,7 +13,6 @@ const READ_ONLY = new Set([
     "web_search",
     "web_fetch",
     "system_info",
-    "skill",
     "ask_user",
     "todo",
     "exit_plan",

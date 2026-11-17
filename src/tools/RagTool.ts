@@ -10,7 +10,7 @@ export class RagTool extends Tool {
     "Use action=search to find relevant files/chunks for a question (preferred for 'where is X implemented?', unfamiliar codebase navigation, or cross-file understanding). " +
     "Use action=index to build/refresh the index (incremental by file mtime/size). " +
     "Use action=status to see index stats. Use action=clear to delete the index. " +
-    "Requires a local embedding model in Ollama (default: nomic-embed-text).";
+    "Requires a local embedding model in Ollama (default: nomic-embed-text-v2-moe).";
   parameters = {
     type: "object",
     properties: {
@@ -56,7 +56,7 @@ export class RagTool extends Tool {
       ];
       if (r.errors.length) lines.push(`- errors:\n${r.errors.map((e) => `  - ${e}`).join("\n")}`);
       if (r.indexed === 0 && r.chunks === 0 && r.errors.length) {
-        lines.push("\nIf embeddings failed, pull the model in Ollama, e.g.: ollama pull nomic-embed-text");
+        lines.push("\nIf embeddings failed, pull the model in Ollama, e.g.: ollama pull nomic-embed-text-v2-moe");
       }
       return lines.join("\n");
     }

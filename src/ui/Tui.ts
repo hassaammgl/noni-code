@@ -96,8 +96,6 @@ function summarizeToolArgs(name: string, args: Record<string, any>): string {
     }
     case "git":
       return oneLine([args.action, args.args].flat().filter(Boolean).join(" "), 140);
-    case "skill":
-      return oneLine([args.action, args.name].filter(Boolean).join(" "), 140);
     case "system_info":
       return oneLine(args.section ?? "summary", 140);
     case "exit_plan":

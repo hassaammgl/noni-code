@@ -1,7 +1,6 @@
 import type { Message, Ollama, ToolCall } from "ollama";
 import type { Tool } from "../tools/Tool";
 import type { LlmSettings } from "../config/Config";
-import type { SkillStore } from "../skills/SkillStore";
 import { readText } from "../util/Fs";
 
 export interface AgentUI {
@@ -89,7 +88,6 @@ export class Agent {
     private messages: Message[] = [];
     private ctxByModel = new Map<string, number>();
     private messageSink?: (msg: AgentMessageEvent) => void;
-    private skills?: SkillStore;
     private planModeGetter?: () => boolean;
     /** After plan approval: if todos remain, let the model continue on its own. */
     private continueCheck?: () => boolean;
@@ -127,11 +125,6 @@ export class Agent {
     /** Extra live context for the system prompt (e.g. current todo plan). */
     addContext(provider: () => string) {
         this.contexts.push(provider);
-    }
-
-    /** Only the `.ai` skills index goes into the system prompt; full text loads via the `skill` tool. */
-    useSkills(store: SkillStore) {
-        this.skills = store;
     }
 
     /** Live plan-mode state (shared by the TUI and web). */
@@ -228,7 +221,6 @@ export class Agent {
             })
             .filter(Boolean)
             .join("\n\n");
-        const skills = this.skills?.renderIndex() ?? "";
         const planMode = this.planModeGetter?.() ?? false;
         return `${PERSONA}
 
@@ -243,7 +235,7 @@ export class Agent {
 - Paths: relative to the working directory (e.g. src/index.ts). Don't wander outside it.
 - For battery, CPU, memory, disk and uptime, use the system_info tool. Never guess hardware numbers.
 - If the user asks about the system, answer from this block. Do not guess or contradict it.
-${planMode ? `\n## Plan mode (ACTIVE — read-only)\nYou may not edit files, create or delete anything, run commands, install, or commit. Investigate with read-only tools (read_file, list_dir, glob, grep, rag, read_docs, web_search, web_fetch, git status/diff/log/show, system_info, todo, skill), then submit a short nested plan with exit_plan {"plan":"1. ...\\n  1.1 ..."}. The user must approve it before any change happens. If the user asks you to edit now, explain that plan mode is on and present the plan first.\n` : ""}${skills ? `\n## Skills (index only — load full text with the skill tool)\n${skills}\n` : ""}${extra ? `\n## Current plan (live)\n${extra}\n` : ""}
+${planMode ? `\n## Plan mode (ACTIVE — read-only)\nYou may not edit files, create or delete anything, run commands, install, or commit. Investigate with read-only tools (read_file, list_dir, glob, grep, rag, read_docs, web_search, web_fetch, git status/diff/log/show, system_info, todo), then submit a short nested plan with exit_plan {"plan":"1. ...\\n  1.1 ..."}. The user must approve it before any change happens. If the user asks you to edit now, explain that plan mode is on and present the plan first.\n` : ""}${extra ? `\n## Current plan (live)\n${extra}\n` : ""}
 ## Reminder (always true)
 - NONI is female and uses she/her pronouns. Keep self-references gender-consistent in English.
 - One short dry joke is fine. Two is a stand-up set, and this is a terminal.`;

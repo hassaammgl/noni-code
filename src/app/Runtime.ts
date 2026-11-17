@@ -7,7 +7,6 @@ import { HistoryStore, type HistoryMessage } from "../history/HistoryStore";
 import { PlanGuard } from "../plan/PlanGuard";
 import { PlanMode } from "../plan/PlanMode";
 import { RagStore } from "../rag/RagStore";
-import { SkillStore } from "../skills/SkillStore";
 import { NodeModulesSource, SystemSource } from "../docs/LocalSources";
 import { RegistrySource, WebDocsSource } from "../docs/RemoteSources";
 import { JobManager } from "../jobs/JobManager";
@@ -33,7 +32,6 @@ import { GitTool } from "../tools/GitTool";
 import { GlobTool, GrepTool } from "../tools/SearchTools";
 import { RagTool } from "../tools/RagTool";
 import { SystemInfoTool } from "../tools/SystemTool";
-import { SkillTool } from "../tools/SkillTool";
 import { ExitPlanTool } from "../tools/PlanTool";
 import { TodoTool } from "../tools/TodoTool";
 import { WebFetchTool, WebSearchTool } from "../tools/WebTools";
@@ -58,8 +56,6 @@ export interface Runtime {
     docs: DocsRegistry;
     /** Local RAG index/search (SQLite + Ollama embeddings). */
     rag: RagStore;
-    /** `.ai` skill packs (index in prompt, body on demand). */
-    skills: SkillStore;
     /** Plan mode: read-only investigation, approval via exit_plan. */
     planMode: PlanMode;
     search: SearchEngine;
@@ -130,11 +126,6 @@ export async function createRuntime({ cwd, model, ui }: RuntimeOptions): Promise
     const todos = new TodoStore();
     const rag = new RagStore(cwd, ollama, config.rag);
 
-    // `.ai` skills: only the index goes into the system prompt; full text loads via the `skill` tool
-    const skills = new SkillStore(cwd);
-    await skills.load();
-    agent.useSkills(skills);
-
     // Plan mode: when ON, only read-only tools are allowed; approval comes via exit_plan.
     // Runs before DocsGuard so the plan-mode message is shown.
     const planMode = new PlanMode(planModeDefault());
@@ -163,7 +154,6 @@ export async function createRuntime({ cwd, model, ui }: RuntimeOptions): Promise
         new RagTool(rag),
         new SystemInfoTool(),
         new TodoTool(todos),
-        new SkillTool(skills),
         new ExitPlanTool(planMode, todos, async (plan) => {
             const approved = await agent.approvePlan(plan);
             if (approved) {
@@ -194,7 +184,6 @@ export async function createRuntime({ cwd, model, ui }: RuntimeOptions): Promise
         todos,
         docs,
         rag,
-        skills,
         planMode,
         search,
         mcp,

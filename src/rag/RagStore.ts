@@ -38,7 +38,7 @@ function defaultSettings(cwd: string, rag: RagSettings = {}): Required<RagSettin
   const dbPath = rag.dbPath ?? ".noni/rag.db";
   return {
     enabled: rag.enabled ?? true,
-    embedModel: rag.embedModel ?? process.env.NONI_RAG_EMBED_MODEL ?? "nomic-embed-text",
+    embedModel: rag.embedModel ?? process.env.NONI_RAG_EMBED_MODEL ?? "nomic-embed-text-v2-moe",
     chunkSize: Math.max(200, Math.floor(rag.chunkSize ?? 1600)),
     chunkOverlap: Math.max(0, Math.floor(rag.chunkOverlap ?? 200)),
     topK: Math.max(1, Math.floor(rag.topK ?? 6)),

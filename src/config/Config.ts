@@ -18,7 +18,7 @@ export interface LlmSettings {
 export interface RagSettings {
     /** Enable RAG features. Indexing/search still happen via the rag tool. */
     enabled?: boolean;
-    /** Ollama embedding model (must be pulled locally), e.g. nomic-embed-text */
+    /** Ollama embedding model (must be pulled locally), e.g. nomic-embed-text-v2-moe */
     embedModel?: string;
     /** Chunk size in characters */
     chunkSize?: number;
@@ -51,7 +51,7 @@ function defaultConfig(): NoniConfig {
         llm: { num_ctx: "max" },
         rag: {
             enabled: true,
-            embedModel: process.env.NONI_RAG_EMBED_MODEL ?? "nomic-embed-text",
+            embedModel: process.env.NONI_RAG_EMBED_MODEL ?? "nomic-embed-text-v2-moe",
             chunkSize: 1600,
             chunkOverlap: 200,
             topK: 6,

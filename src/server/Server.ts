@@ -206,7 +206,6 @@ export function startServer({
                     cwd: runtime.cwd,
                     sessionId: runtime.sessionId,
                     tools: runtime.agent.listTools().length,
-                    skills: runtime.skills.list().length,
                     planMode: runtime.planMode.on,
                 });
                 return;
